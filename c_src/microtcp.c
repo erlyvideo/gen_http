@@ -56,7 +56,6 @@ typedef struct {
   http_parser_settings settings;
   http_parser *parser;
   ErlDrvBinary* buffer;
-  ssize_t offset, size;
   Header headers[HTTP_MAX_HEADERS];
   int headers_count;
   ErlDrvBinary *url;
@@ -64,7 +63,7 @@ typedef struct {
   Config config; // Only for listener mode
 } HTTP;
 
-static void handle_http_input(HTTP *d);
+static void read_http(HTTP *d);
 static int receive_body(http_parser *p, const char *data, size_t len);
 static int skip_body(http_parser *p, const char *data, size_t len);
 
@@ -218,14 +217,9 @@ static ErlDrvSSizeT microtcp_drv_command(ErlDrvData handle, unsigned int command
     }
     
     case CMD_ACTIVE_ONCE: {
-      if(d->size > 0) {
-        fprintf(stderr, "Reusing buffer(%d,%d): '%.*s'\r\n", (int)d->offset, (int)d->size, (int)(d->size + d->offset), d->buffer->orig_bytes);
-        handle_http_input(d);
-      } else {
-        activate_read(d);
-        if(d->mode == CLIENT_MODE) {
-          driver_set_timer(d->port, d->timeout);
-        }
+      activate_read(d);
+      if(d->mode == CLIENT_MODE) {
+        driver_set_timer(d->port, d->timeout);
       }
       memcpy(*rbuf, "ok", 2);
       return 2;
@@ -444,43 +438,35 @@ static void microtcp_drv_input(ErlDrvData handle, ErlDrvEvent event)
   }
   
   if(d->mode == CLIENT_MODE) {
-    d->offset = 0;
-    d->size = 0;
-    ssize_t n = recv(d->socket, d->buffer->orig_bytes, d->buffer->orig_size, 0);
-    
-    if(n == 0 || (n < 0 && errno == ECONNRESET)) {
-      tcp_exit(d);
-      return;
-    }
-    
-    if(n < 0) {
-      if((errno != EWOULDBLOCK) && (errno != EINTR) && (errno != EAGAIN)) {
-        fprintf(stderr, "Error in recv: %s\r\n", strerror(errno));
-        tcp_exit(d);
-      }  
-      return;
-    }
-    
-    assert(n <= d->buffer->orig_size);
-    
-    d->size = n;
-    handle_http_input(d);
+    read_http(d);
+    return;
   }
 }
 
 
-static void handle_http_input(HTTP *d) {
+static void read_http(HTTP *d) {
+
+  ssize_t n = recv(d->socket, d->buffer->orig_bytes, d->buffer->orig_size, MSG_PEEK);
   
-  // fprintf(stderr, "Handling HTTP(%d): %d/%d\r\n", d->parser->state, (int)d->offset, (int)d->size);
+  if(n == 0 || (n < 0 && errno == ECONNRESET)) {
+    tcp_exit(d);
+    return;
+  }
   
-  assert(d->size > 0);
-  assert(d->offset >= 0);
+  if(n < 0) {
+    if((errno != EWOULDBLOCK) && (errno != EINTR) && (errno != EAGAIN)) {
+      fprintf(stderr, "Error in recv: %s\r\n", strerror(errno));
+      tcp_exit(d);
+    }  
+    return;
+  }
   
-  assert(d->offset < d->buffer->orig_size);
-  assert(d->offset + d->size <= d->buffer->orig_size);
+  assert(n <= d->buffer->orig_size);
   
   
-  ssize_t nparsed = http_parser_execute(d->parser, &d->settings, d->buffer->orig_bytes + d->offset, d->size);
+  ssize_t nparsed = http_parser_execute(d->parser, &d->settings, d->buffer->orig_bytes, n);
+  
+  recv(d->socket, d->buffer->orig_bytes, nparsed, 0);
   
   if(d->parser->upgrade) {
     fprintf(stderr, "Websockets not supported\n");
@@ -488,36 +474,15 @@ static void handle_http_input(HTTP *d) {
     return;
   }
   
-  int o = d->offset;
-  int s = d->size;
-  
-  if(nparsed < 0 || nparsed > d->size) {
-    fprintf(stderr, "Shit! Some parsing error happened (%d/%d): %.*s\r\n", (int)d->offset, (int)d->size, (int)(s+o), d->buffer->orig_bytes);
-    _exit(1);
-  }
-  
-  assert(nparsed >= 0);
-  assert(d->offset + nparsed <= d->buffer->orig_size);
-  
-  d->offset = d->offset + nparsed;
-  
-  assert(d->size >= nparsed);
-  
-  d->size = d->size - nparsed;
-  
-  assert(d->size == 0);
-  
-  if(d->size > 0) {
+  if(nparsed != n) {
     if(d->parser->pause_on_body) {
-      fprintf(stderr, "Stopped parsing because body met: %d(%d): %.*s\r\n", (int)d->size, d->parser->state, (int)d->size, d->buffer->orig_bytes + d->offset);
+      fprintf(stderr, "Stopped parsing because body met: %d(%d): %.*s\r\n", (int)n, d->parser->state, (int)n, d->buffer->orig_bytes);
     } else {
-      fprintf(stderr, "Read(%d/%d): %.*s\r\n", (int)s, (int)o, (int)(s), d->buffer->orig_bytes);
+      fprintf(stderr, "Read(%d): %.*s\r\n", (int)n, (int)n, d->buffer->orig_bytes);
       fprintf(stderr, "Handle HTTP error: %s(%s)\n", http_errno_name(d->parser->http_errno), http_errno_description(d->parser->http_errno));
       tcp_exit(d);
       return;
     }
-  } else {
-    d->offset = 0;
   }
   
   // fprintf(stderr, "Parsed all: %d, %d\r\n", (int)nparsed, d->parser->state);

@@ -1,7 +1,5 @@
-#!/usr/bin/env ERL_LIBS=.. escript
-%%! -pa ebin
-
-% a %%! -pa ebin  -smp enable +K true +A 16 +a 2048
+#!/usr/bin/env escript
+%%! -pa ebin  -smp enable +K true +A 16 +a 2048
 
 -define(C(X), io:format("client:~p ~p~n", [?LINE,X])).
 -define(S(X), io:format("server:~p ~p~n", [?LINE,X])).

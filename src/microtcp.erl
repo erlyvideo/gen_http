@@ -34,7 +34,11 @@ listen(Port) -> listen(Port, []).
 -define(CMD_RECEIVE_BODY, 3).
 
 listen(Port, Options) ->
-  case erl_ddll:load_driver(code:lib_dir(microtcp,priv), microtcp_drv) of
+  Path = case code:lib_dir(microtcp,priv) of
+    P when is_list(P) -> P;
+    _ -> filename:dirname(code:which(?MODULE))++"/../priv/"
+  end,
+  case erl_ddll:load_driver(Path, microtcp_drv) of
   	ok -> ok;
   	{error, already_loaded} -> ok;
   	{error, Error} -> exit({error, {could_not_load_driver,erl_ddll:format_error(Error)}})

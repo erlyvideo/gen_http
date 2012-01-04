@@ -60,8 +60,6 @@ typedef struct {
   Header headers[HTTP_MAX_HEADERS];
   int headers_count;
   ErlDrvBinary *url;
-  ErlDrvTermData *reply;
-  size_t reply_count;
   
   Config config; // Only for listener mode
 } HTTP;
@@ -248,8 +246,6 @@ static int on_message_begin(http_parser *p) {
   HTTP *d = (HTTP *)p->data;
   d->url = NULL;
   d->headers_count = 0;
-  d->reply = NULL;
-  d->reply_count = 0;
   return 0;
 }
 
@@ -294,8 +290,7 @@ static int on_headers_complete(http_parser *p) {
   deactivate_read(d);
 
   int count = 2 + 2 + 2 + 4 + 6 + d->headers_count*(4*2 + 2) + 3 + 2;
-  ErlDrvTermData *reply = d->reply = (ErlDrvTermData *)driver_alloc(count*sizeof(ErlDrvTermData));
-  
+  ErlDrvTermData reply[count];
   
   int i = 0;
   
@@ -342,9 +337,7 @@ static int on_headers_complete(http_parser *p) {
   reply[i++] = ERL_DRV_TUPLE;
   reply[i++] = 6;
   
-  d->reply_count = i;
-  
-  
+  driver_output_term(d->port, reply, i);
   // reply[10] = ERL_DRV_TUPLE;
   // reply[11] = 4;
   // int o = driver_output_term(d->port, reply, 12);
@@ -525,13 +518,6 @@ static void handle_http_input(HTTP *d) {
     }
   } else {
     d->offset = 0;
-  }
-  
-  if(d->reply) {
-    driver_output_term(d->port, d->reply, d->reply_count);
-    driver_free(d->reply);
-    d->reply = NULL;
-    d->reply_count = 0;
   }
   
   // fprintf(stderr, "Parsed all: %d, %d\r\n", (int)nparsed, d->parser->state);

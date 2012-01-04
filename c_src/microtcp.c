@@ -23,6 +23,7 @@ static ErlDrvTermData atom_close;
 static ErlDrvTermData atom_eof;
 static ErlDrvTermData method_atoms[HTTP_PATCH+1];
 
+static int request_count = 0;
 
 enum {
     CMD_LISTEN = 1,
@@ -228,6 +229,12 @@ static ErlDrvSSizeT microtcp_drv_command(ErlDrvData handle, unsigned int command
       memcpy(*rbuf, "ok", 2);
       return 2;
     }
+    
+    case 4: {
+      int count = htonl(request_count);
+      memcpy(*rbuf, &count, 4);
+      return 4;
+    }
 
   }
   return 0;
@@ -373,6 +380,7 @@ static int on_message_complete(http_parser *p) {
   };
   driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
   
+  request_count++;
   return 0;
 }
 

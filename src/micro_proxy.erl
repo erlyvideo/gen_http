@@ -10,6 +10,7 @@ listen(Upstream) ->
   ets:new(http_cache, [set,named_table,public]),
   inets:start(),
   spawn(fun() -> reloader(Upstream) end),
+  timer:send_interval(1000, dump),
   listen_loop(Listen, Upstream).
 
 
@@ -22,6 +23,10 @@ listen_loop(Listen, Upstream) ->
       end),
       microtcp:controlling_process(Socket, Pid),
       Pid ! {socket, Socket},
+      listen_loop(Listen, Upstream);
+    dump ->
+      <<Count:32>> = port_control(Listen, 4, <<>>),
+      ?D({requests,Count}),
       listen_loop(Listen, Upstream);
     Else ->
       ?D(Else)

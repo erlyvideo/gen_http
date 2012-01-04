@@ -476,7 +476,7 @@ static void read_http(HTTP *d) {
   
   if(nparsed != n) {
     if(d->parser->pause_on_body) {
-      fprintf(stderr, "Stopped parsing because body met: %d(%d): %.*s\r\n", (int)n, d->parser->state, (int)n, d->buffer->orig_bytes);
+      // fprintf(stderr, "Stopped parsing because body met: %d(%d): %.*s\r\n", (int)n, d->parser->state, (int)n, d->buffer->orig_bytes);
     } else {
       fprintf(stderr, "Read(%d): %.*s\r\n", (int)n, (int)n, d->buffer->orig_bytes);
       fprintf(stderr, "Handle HTTP error: %s(%s)\n", http_errno_name(d->parser->http_errno), http_errno_description(d->parser->http_errno));

@@ -14,15 +14,15 @@ main([]) ->
   erlang:monitor(process, Listener),
   
   
-  % Client = spawn(fun() ->
-  %   connect(9000)
-  % end),
-  % erlang:monitor(process, Client),
-  % 
-  % receive
-  %   {'DOWN', _, process, Client, Reason1} -> io:format("client died ~p~n", [Reason1])
-  % end,
-  % Listener ! stop,
+  Client = spawn(fun() ->
+    connect(9000)
+  end),
+  erlang:monitor(process, Client),
+  
+  receive
+    {'DOWN', _, process, Client, Reason1} -> io:format("client died ~p~n", [Reason1])
+  end,
+  Listener ! stop,
   receive
     {'DOWN', _, process, Listener, Reason2} -> io:format("listener died ~p~n", [Reason2])
   end,
@@ -105,15 +105,15 @@ listen_loop(Listen) ->
   end.
 
 connect(Port) ->
-  % {ok, _R1} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
-  % ?C(_R1),
+  {ok, _R1} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
+  ?C(_R1),
   Post = "abcdefghikhjlpmnopqrstuvwxyz",
-  [httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", Post}, [], []) || _N <- lists:seq(1,10000)],
+  [httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", Post}, [], []) || _N <- lists:seq(1,1000)],
   {ok, _R2} = httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", Post}, [], []),
   % ?C(_R2),
-  % {ok, _R3} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
-  % ?C(_R3),
-  % {ok, _R3} = httpc:request(put, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "text/plain", "Hi!!!\ndamn\n"}, [], []),
+  {ok, _R3} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
+  ?C(_R3),
+  {ok, _R3} = httpc:request(put, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "text/plain", "Hi!!!\ndamn\n"}, [], []),
   ok.
   
   
@@ -142,16 +142,16 @@ client_loop(Socket) ->
         [{URL, R}] ->
           reply(Socket, R, Keepalive)
       end,
-      % ?S(Req),
-      % if 
-      %   Method == 'POST' orelse Method == 'PUT' ->
-      %     microtcp:receive_body(Socket, 1024),          
-      %     Body = receive_body(Socket, []),
-      %     % ?S(Body),
-      %     ok;
-      %   true ->
-      %     ok
-      % end,  
+      if 
+        Method == 'POST' orelse Method == 'PUT' ->
+          ?S(Req),
+          microtcp:receive_body(Socket, 1024),          
+          Body = receive_body(Socket, []),
+          ?S(Body),
+          ok;
+        true ->
+          ok
+      end,  
       if Keepalive == keepalive ->
         client_loop(Socket);
       true ->

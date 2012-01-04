@@ -1,6 +1,7 @@
 -module(micro_proxy).
 
 -compile(export_all).
+-define(D(X), io:format("~p ~p~n", [?LINE,X])).
 
 listen(Upstream) ->
   {ok, Listen} = microtcp:listen(9000, [{backlog,4000}]),

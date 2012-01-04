@@ -43,3 +43,9 @@ client_loop(Socket) ->
 ```
 
 Current state is only proof-of-concept, so does not have handling anything except GET request.
+
+
+TODO
+----
+
+* Multiaccept

@@ -18,6 +18,9 @@
 typedef enum {LISTENER_MODE, CLIENT_MODE} SocketMode;
 
 static ErlDrvTermData atom_http;
+static ErlDrvTermData atom_keepalive;
+static ErlDrvTermData atom_close;
+static ErlDrvTermData atom_eof;
 static ErlDrvTermData method_atoms[HTTP_PATCH+1];
 
 
@@ -53,10 +56,12 @@ typedef struct {
   http_parser_settings settings;
   http_parser *parser;
   ErlDrvBinary* buffer;
-  size_t offset, size;
+  ssize_t offset, size;
   Header headers[HTTP_MAX_HEADERS];
   int headers_count;
   ErlDrvBinary *url;
+  ErlDrvTermData *reply;
+  size_t reply_count;
   
   Config config; // Only for listener mode
 } HTTP;
@@ -67,6 +72,9 @@ static int skip_body(http_parser *p, const char *data, size_t len);
 
 static int microtcp_init(void) {
   atom_http = driver_mk_atom("http");
+  atom_keepalive = driver_mk_atom("keepalive");
+  atom_close = driver_mk_atom("close");
+  atom_eof = driver_mk_atom("eof");
   int i;
   for(i = 0; i <= HTTP_PATCH; i++) {
     method_atoms[i] = driver_mk_atom((char *)http_method_str(i));
@@ -90,7 +98,11 @@ static void microtcp_drv_stop(ErlDrvData handle)
 {
   HTTP* d = (HTTP *)handle;
   if(d->mode == LISTENER_MODE) {
-    fprintf(stderr, "Listener port is closing: %d\r\n", ntohs(d->config.port));
+    // fprintf(stderr, "```Listener port is closing: %d\r\n", ntohs(d->config.port));
+  }
+  if(d->mode == CLIENT_MODE) {
+    driver_free(d->parser);
+    driver_free_binary(d->buffer);
   }
   driver_select(d->port, (ErlDrvEvent)(d->socket), (int)DO_READ|DO_WRITE, 0);
   close(d->socket);
@@ -102,12 +114,11 @@ static void tcp_exit(HTTP *d)
 {
   driver_select(d->port, (ErlDrvEvent)d->socket, DO_READ|DO_WRITE, 0);
   ErlDrvTermData reply[] = {
-    ERL_DRV_ATOM, driver_mk_atom("tcp_closed"),
+    ERL_DRV_ATOM, driver_mk_atom("http_closed"),
     ERL_DRV_PORT, driver_mk_port(d->port),
     ERL_DRV_TUPLE, 2
   };
   driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
-  driver_free_binary(d->buffer);
   driver_exit(d->port, 0);
 }
 
@@ -210,6 +221,7 @@ static ErlDrvSSizeT microtcp_drv_command(ErlDrvData handle, unsigned int command
     
     case CMD_ACTIVE_ONCE: {
       if(d->size > 0) {
+        fprintf(stderr, "Reusing buffer(%d,%d): '%.*s'\r\n", (int)d->offset, (int)d->size, (int)(d->size + d->offset), d->buffer->orig_bytes);
         handle_http_input(d);
       } else {
         activate_read(d);
@@ -236,6 +248,8 @@ static int on_message_begin(http_parser *p) {
   HTTP *d = (HTTP *)p->data;
   d->url = NULL;
   d->headers_count = 0;
+  d->reply = NULL;
+  d->reply_count = 0;
   return 0;
 }
 
@@ -280,11 +294,12 @@ static int on_headers_complete(http_parser *p) {
   deactivate_read(d);
 
   int count = 2 + 2 + 2 + 4 + 6 + d->headers_count*(4*2 + 2) + 3 + 2;
-  ErlDrvTermData reply[count];
+  ErlDrvTermData *reply = d->reply = (ErlDrvTermData *)driver_alloc(count*sizeof(ErlDrvTermData));
+  
   
   int i = 0;
   
-  // fprintf(stderr, "S> %s %.*s HTTP/%d.%d\r\n", http_method_str(p->method), (int)d->url->orig_size, d->url->orig_bytes, p->http_major, p->http_minor);
+  // fprintf(stderr, "S> %s %.*s HTTP/%d.%d %d\r\n", http_method_str(p->method), (int)d->url->orig_size, d->url->orig_bytes, p->http_major, p->http_minor, http_should_keep_alive(p));
   
   
   reply[i++] = ERL_DRV_ATOM;
@@ -298,12 +313,8 @@ static int on_headers_complete(http_parser *p) {
   reply[i++] = (ErlDrvTermData)d->url->orig_size;
   reply[i++] = 0;
   
-  reply[i++] = ERL_DRV_UINT;
-  reply[i++] = p->http_major;
-  reply[i++] = ERL_DRV_UINT;
-  reply[i++] = p->http_minor;
-  reply[i++] = ERL_DRV_TUPLE;
-  reply[i++] = 2;
+  reply[i++] = ERL_DRV_ATOM;
+  reply[i++] = http_should_keep_alive(p) ? atom_keepalive : atom_close;
   
   int j;
   
@@ -331,8 +342,9 @@ static int on_headers_complete(http_parser *p) {
   reply[i++] = ERL_DRV_TUPLE;
   reply[i++] = 6;
   
-  driver_output_term(d->port, reply, i);
-  fprintf(stderr, "Sending headers for %s\r\n", http_method_str(p->method));
+  d->reply_count = i;
+  
+  
   // reply[10] = ERL_DRV_TUPLE;
   // reply[11] = 4;
   // int o = driver_output_term(d->port, reply, 12);
@@ -371,7 +383,7 @@ static int on_message_complete(http_parser *p) {
   ErlDrvTermData reply[] = {
     ERL_DRV_ATOM, atom_http,
     ERL_DRV_PORT, driver_mk_port(d->port),
-    ERL_DRV_ATOM, driver_mk_atom("eof"),
+    ERL_DRV_ATOM, atom_eof,
     ERL_DRV_TUPLE, 3
   };
   driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
@@ -387,6 +399,13 @@ static void accept_tcp(HTTP *d)
   int fd = accept(d->socket, (struct sockaddr *)&client_addr, &sock_len);
   // deactivate_read(d);
   if(fd == -1) {
+    ErlDrvTermData reply[] = {
+      ERL_DRV_ATOM, driver_mk_atom("http_error"),
+      ERL_DRV_PORT, driver_mk_port(d->port),
+      ERL_DRV_PORT, driver_mk_atom(erl_errno_id(errno)),
+      ERL_DRV_TUPLE, 3
+    };
+    driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
     return;
   }
   HTTP* c = driver_alloc(sizeof(HTTP));
@@ -398,7 +417,8 @@ static void accept_tcp(HTTP *d)
   ErlDrvPort client = driver_create_port(d->port, d->owner_pid, "microtcp_drv", (ErlDrvData)c);
   c->port = client;
   c->timeout = d->config.timeout;
-  c->parser = malloc(sizeof(http_parser));
+  c->parser = driver_alloc(sizeof(http_parser));
+  bzero(c->parser, sizeof(http_parser));
   c->parser->data = c;
   c->settings.on_message_begin = on_message_begin;
   c->settings.on_url = on_url;
@@ -412,7 +432,7 @@ static void accept_tcp(HTTP *d)
   driver_set_timer(c->port, c->timeout);
   set_port_control_flags(c->port, PORT_CONTROL_FLAG_BINARY);
   ErlDrvTermData reply[] = {
-    ERL_DRV_ATOM, driver_mk_atom("tcp_connection"),
+    ERL_DRV_ATOM, driver_mk_atom("http_connection"),
     ERL_DRV_PORT, driver_mk_port(d->port),
     ERL_DRV_PORT, driver_mk_port(client),
     ERL_DRV_TUPLE, 3
@@ -432,6 +452,7 @@ static void microtcp_drv_input(ErlDrvData handle, ErlDrvEvent event)
   
   if(d->mode == CLIENT_MODE) {
     d->offset = 0;
+    d->size = 0;
     ssize_t n = recv(d->socket, d->buffer->orig_bytes, d->buffer->orig_size, 0);
     
     if(n == 0 || (n < 0 && errno == ECONNRESET)) {
@@ -447,6 +468,8 @@ static void microtcp_drv_input(ErlDrvData handle, ErlDrvEvent event)
       return;
     }
     
+    assert(n <= d->buffer->orig_size);
+    
     d->size = n;
     handle_http_input(d);
   }
@@ -455,7 +478,14 @@ static void microtcp_drv_input(ErlDrvData handle, ErlDrvEvent event)
 
 static void handle_http_input(HTTP *d) {
   
-  fprintf(stderr, "Handling HTTP(%d): %d/%d\r\n", d->parser->state, (int)d->offset, (int)d->size);
+  // fprintf(stderr, "Handling HTTP(%d): %d/%d\r\n", d->parser->state, (int)d->offset, (int)d->size);
+  
+  assert(d->size > 0);
+  assert(d->offset >= 0);
+  
+  assert(d->offset < d->buffer->orig_size);
+  assert(d->offset + d->size <= d->buffer->orig_size);
+  
   
   ssize_t nparsed = http_parser_execute(d->parser, &d->settings, d->buffer->orig_bytes + d->offset, d->size);
   
@@ -465,21 +495,43 @@ static void handle_http_input(HTTP *d) {
     return;
   }
   
-  d->offset += nparsed;
-  d->size -= nparsed;
+  int o = d->offset;
+  int s = d->size;
+  
+  if(nparsed < 0 || nparsed > d->size) {
+    fprintf(stderr, "Shit! Some parsing error happened (%d/%d): %.*s\r\n", (int)d->offset, (int)d->size, (int)(s+o), d->buffer->orig_bytes);
+    _exit(1);
+  }
+  
+  assert(nparsed >= 0);
+  assert(d->offset + nparsed <= d->buffer->orig_size);
+  
+  d->offset = d->offset + nparsed;
+  
+  assert(d->size >= nparsed);
+  
+  d->size = d->size - nparsed;
+  
+  assert(d->size == 0);
   
   if(d->size > 0) {
     if(d->parser->pause_on_body) {
       fprintf(stderr, "Stopped parsing because body met: %d(%d): %.*s\r\n", (int)d->size, d->parser->state, (int)d->size, d->buffer->orig_bytes + d->offset);
-      // fprintf(stderr, "Restarting http headers: %s %d %d/%d\r\n", http_method_str(d->parser->method), d->parser->state, (int)nparsed, (int)n);
-      // nparsed = http_parser_execute(d->parser, &d->settings, d->buffer->orig_bytes + nparsed, n - nparsed);
     } else {
+      fprintf(stderr, "Read(%d/%d): %.*s\r\n", (int)s, (int)o, (int)(s), d->buffer->orig_bytes);
       fprintf(stderr, "Handle HTTP error: %s(%s)\n", http_errno_name(d->parser->http_errno), http_errno_description(d->parser->http_errno));
       tcp_exit(d);
       return;
     }
   } else {
     d->offset = 0;
+  }
+  
+  if(d->reply) {
+    driver_output_term(d->port, d->reply, d->reply_count);
+    driver_free(d->reply);
+    d->reply = NULL;
+    d->reply_count = 0;
   }
   
   // fprintf(stderr, "Parsed all: %d, %d\r\n", (int)nparsed, d->parser->state);
@@ -498,7 +550,7 @@ static void microtcp_inet_timeout(ErlDrvData handle)
 {
   HTTP* d = (HTTP *)handle;
   ErlDrvTermData reply[] = {
-    ERL_DRV_ATOM, driver_mk_atom("tcp_error"),
+    ERL_DRV_ATOM, driver_mk_atom("http_error"),
     ERL_DRV_PORT, driver_mk_port(d->port),
     ERL_DRV_PORT, driver_mk_atom("timeout"),
     ERL_DRV_TUPLE, 3

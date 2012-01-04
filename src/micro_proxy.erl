@@ -3,6 +3,8 @@
 -compile(export_all).
 -define(D(X), io:format("~p ~p~n", [?LINE,X])).
 
+-compile({no_auto_import,[now/0]}).
+
 listen(Upstream) ->
   {ok, Listen} = microtcp:listen(9000, [{backlog,4000}]),
   ets:new(http_cache, [set,named_table,public]),
@@ -62,15 +64,14 @@ client_launch(Upstream) ->
 client_loop(Socket, Upstream) ->
   microtcp:active_once(Socket),
   receive
-    {http, Socket, Method, URL, Keepalive, _ReqHeaders} = Req ->
+    {http, Socket, _Method, URL, _Keepalive, _ReqHeaders} ->
       ?D({get,URL}),
-      Now = now(),
       case ets:lookup(http_cache, URL) of
         [{URL, Reply, Expires}] ->
           microtcp:send(Socket, Reply);
         [] ->
           Reply = load(Upstream, URL),
-          microtcp:send(Socket, Bin)
+          microtcp:send(Socket, Reply)
       end,
       client_loop(Socket, Upstream);
     {http, Socket, _} ->

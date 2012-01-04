@@ -25,11 +25,13 @@
 -include("log.hrl").
 
 -export([listen/2, listen/1, controlling_process/2, active_once/1, send/2, close/1, peername/1]).
+-export([receive_body/2]).
 
 listen(Port) -> listen(Port, []).
 
 -define(CMD_LISTEN, 1).
 -define(CMD_ACTIVE_ONCE, 2).
+-define(CMD_RECEIVE_BODY, 3).
 
 listen(Port, Options) ->
   case erl_ddll:load_driver(code:lib_dir(microtcp,priv), microtcp_drv) of
@@ -69,6 +71,11 @@ controlling_process(Socket, NewOwner) when is_port(Socket), is_pid(NewOwner) ->
 				{error, Reason}
 		end
   end.
+
+receive_body(Socket, ChunkSize) ->
+  <<"ok">> = port_control(Socket, ?CMD_RECEIVE_BODY, <<ChunkSize:32/little>>),
+  ok.
+  
 
 peername(Socket) when is_port(Socket) ->
   {ok, {{0,0,0,0}, 4000}}.

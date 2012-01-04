@@ -214,7 +214,8 @@ struct http_parser {
   unsigned short http_major;
   unsigned short http_minor;
   unsigned short status_code; /* responses only */
-  unsigned char method;    /* requests only */
+  unsigned char method : 7;    /* requests only */
+  unsigned char pause_on_body : 1;
   unsigned char http_errno : 7;
 
   /* 1 = Upgrade header was present and the parser has exited because of that.

@@ -11,14 +11,15 @@ main([]) ->
   end),
   erlang:monitor(process, Listener),
   
-  % Client = spawn(fun() ->
-  %   connect(9000)
-  % end),
-  % erlang:monitor(process, Client),
-  % 
-  % receive
-  %   {'DOWN', _, process, Client, Reason1} -> io:format("client died ~p~n", [Reason1])
-  % end,
+  Client = spawn(fun() ->
+    connect(9000)
+  end),
+  erlang:monitor(process, Client),
+  
+  receive
+    {'DOWN', _, process, Client, Reason1} -> io:format("client died ~p~n", [Reason1])
+  end,
+  Listener ! stop,
   receive
     {'DOWN', _, process, Listener, Reason2} -> io:format("listener died ~p~n", [Reason2])
   end,
@@ -48,10 +49,10 @@ listen(Port) ->
   listen_loop(Listen, Bin).
   
 listen_loop(Listen, Bin) ->  
-  ?S({accept_delay}),
-  timer:sleep(100),
+  % ?S({accept_delay}),
+  % timer:sleep(100),
   microtcp:active_once(Listen),
-  ?S(accepting),
+  % ?S(accepting),
   receive
     {tcp_connection, Listen, Socket} ->
       Pid = spawn(fun() ->
@@ -68,16 +69,22 @@ listen_loop(Listen, Bin) ->
       put(clients, get(clients)-1),
       ?S({died_client, get(clients)}),
       listen_loop(Listen, Bin);
+    stop ->
+      microtcp:close(Listen);  
     Else ->
       ?S(Else)
-  % after
-  %   5000 ->
-  %     ?S({no_more_clients})    
+  after
+    5000 ->
+      ?S({no_more_clients})    
   end.
 
 connect(Port) ->
-  % {ok, _R1} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
-  % {ok, _R2} = httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", "a=b&c=d"}, [], []),
+  {ok, _R1} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
+  ?C(_R1),
+  {ok, _R2} = httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", "a=b&c=d"}, [], []),
+  ?C(_R2),
+  {ok, _R3} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
+  ?C(_R3),
   % {ok, _R3} = httpc:request(put, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "text/plain", "Hi!!!\ndamn\n"}, [], []),
   ok.
   
@@ -102,7 +109,7 @@ client_loop(Socket, Reply) ->
         [{URL, R}] ->
           microtcp:send(Socket, R)
       end,
-      % ?S(Req),
+      ?S(Req),
       % microtcp:send(Socket, Reply),
       client_loop(Socket, Reply);
     {tcp_closed, Socket} ->

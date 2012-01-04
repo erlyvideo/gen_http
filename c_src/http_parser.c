@@ -1528,6 +1528,9 @@ size_t http_parser_execute (http_parser *parser,
          * is needed for the annoying case of recieving a response to a HEAD
          * request.
          */
+        
+        parser->pause_on_body = 0; 
+         
         if (settings->on_headers_complete) {
           switch (settings->on_headers_complete(parser)) {
             case 0:
@@ -1536,7 +1539,11 @@ size_t http_parser_execute (http_parser *parser,
             case 1:
               parser->flags |= F_SKIPBODY;
               break;
-
+            
+            case 2:
+              parser->pause_on_body = 1;
+              break;
+            
             default:
               parser->state = state;
               SET_ERRNO(HPE_CB_headers_complete);
@@ -1574,6 +1581,11 @@ size_t http_parser_execute (http_parser *parser,
               state = s_body_identity_eof;
             }
           }
+        }
+        
+        if(parser->pause_on_body && (state == s_body_identity_eof || state == s_body_identity || state == s_chunk_size_start)) {
+          parser->state = state;
+          return (p - data) + 1;
         }
 
         break;

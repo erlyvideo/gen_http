@@ -7,6 +7,7 @@ listen(Upstream) ->
   {ok, Listen} = microtcp:listen(9000, [{backlog,4000}]),
   ets:new(http_cache, [set,named_table,public]),
   inets:start(),
+  spawn(fun() -> reloader(Upstream) end),
   listen_loop(Listen, Upstream).
 
 
@@ -24,6 +25,34 @@ listen_loop(Listen, Upstream) ->
       ?D(Else)
   end.
 
+now() ->
+  timer:now_diff(os:timestamp(),{0,0,0}) div 1000000.
+
+
+reloader(Upstream) ->
+  timer:sleep(1000),
+  Now = now(),
+  [load(Upstream, URL) || {URL, _, Expires} <- ets:tab2list(http_cache), Expires < Now],
+  reloader(Upstream).
+
+
+
+load_and_save(Upstream, URL) ->
+  ?D({refetch,URL}),
+  {ok, {{Proto,Code,Msg}, Headers, Reply}} = httpc:request("http://"++Upstream++binary_to_list(URL)),
+  Bin = iolist_to_binary([
+    io_lib:format("~s ~p ~s\r\n", [Proto,Code,Msg]),
+    [[K, ": ", V, "\r\n"] || {K,V} <- Headers],
+    "\r\n",
+    Reply
+  ]),
+  {match, [Expiry]} = re:run(proplists:get_value("cache-control", Headers, "max-age=36000"), "max-age=(\\d+)", [{capture,all_but_first,list}]),
+  Expires = Now + list_to_integer(Expiry),
+  ets:insert(http_cache, {URL, Bin, Expires}),
+  Bin.
+
+load(Upstream, URL) ->
+  load_and_save(Upstream, URL).
 
 client_launch(Upstream) ->
   receive
@@ -34,22 +63,13 @@ client_loop(Socket, Upstream) ->
   microtcp:active_once(Socket),
   receive
     {http, Socket, Method, URL, Keepalive, _ReqHeaders} = Req ->
-      Now = timer:now_diff(os:timestamp(),{0,0,0}) div 1000000,
+      ?D({get,URL}),
+      Now = now(),
       case ets:lookup(http_cache, URL) of
-        [{URL, Reply, Expires}] when Expires > Now ->
+        [{URL, Reply, Expires}] ->
           microtcp:send(Socket, Reply);
-        _ ->
-          ?D(URL),
-          {ok, {{Proto,Code,Msg}, Headers, Reply}} = httpc:request("http://"++Upstream++binary_to_list(URL)),
-          Bin = iolist_to_binary([
-            io_lib:format("~s ~p ~s\r\n", [Proto,Code,Msg]),
-            [[K, ": ", V, "\r\n"] || {K,V} <- Headers],
-            "\r\n",
-            Reply
-          ]),
-          {match, [Expiry]} = re:run(proplists:get_value("cache-control", Headers, "max-age=36000"), "max-age=(\\d+)", [{capture,all_but_first,list}]),
-          Expires = Now + list_to_integer(Expiry),
-          ets:insert(http_cache, {URL, Bin, Expires}),
+        [] ->
+          Reply = load(Upstream, URL),
           microtcp:send(Socket, Bin)
       end,
       client_loop(Socket, Upstream);

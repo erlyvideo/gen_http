@@ -50,7 +50,7 @@ reply(Reply, Keepalive) ->
 
 listen(Port) ->
   Opts1 = [binary, {packet, raw}, {reuseaddr, true}, 
-          {keepalive, true}, {backlog, 800}, {active, once}],
+          {keepalive, true}, {backlog, 4000}, {active, once}],
   {ok, Listen} = microtcp:listen(Port, Opts1),
   ?S({open_port,Listen}),
   % Bin = crypto:rand_bytes(?SIZE),

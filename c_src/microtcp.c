@@ -202,9 +202,7 @@ static ErlDrvSSizeT microtcp_drv_command(ErlDrvData handle, unsigned int command
       
       int on = 1;
       if(d->config.reuseaddr || 1) {
-        fprintf(stderr, "Reusing listen addr\r\n");
         setsockopt(d->socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
-        setsockopt(d->socket, SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on)); 
       }
       if(d->config.keepalive) {
         setsockopt(d->socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
@@ -338,7 +336,7 @@ static int on_headers_complete(http_parser *p) {
   
   // fprintf(stderr, "S> -- (%d, %d) \r\n", i, o);
   if(p->method == HTTP_POST || p->method == HTTP_PUT) {
-    return 2;
+    return 0;
   } else {
     return 1;
   }
@@ -375,7 +373,6 @@ static int on_message_complete(http_parser *p) {
   };
   driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
   
-  d->settings.on_body = skip_body;
   return 0;
 }
 
@@ -412,7 +409,7 @@ static void accept_tcp(HTTP *d)
   c->settings.on_header_field = on_header_field;
   c->settings.on_header_value = on_header_value;
   c->settings.on_headers_complete = on_headers_complete;
-  c->settings.on_body = skip_body;
+  c->settings.on_body = receive_body;
   c->settings.on_message_complete = on_message_complete;
   http_parser_init(c->parser, HTTP_REQUEST);
   c->buffer = driver_alloc_binary(10240);
@@ -446,7 +443,7 @@ static void microtcp_drv_input(ErlDrvData handle, ErlDrvEvent event)
 
 static void read_http(HTTP *d) {
 
-  ssize_t n = recv(d->socket, d->buffer->orig_bytes, d->buffer->orig_size, MSG_PEEK);
+  ssize_t n = recv(d->socket, d->buffer->orig_bytes, d->buffer->orig_size, 0);
   
   if(n == 0 || (n < 0 && errno == ECONNRESET)) {
     tcp_exit(d);
@@ -465,8 +462,6 @@ static void read_http(HTTP *d) {
   
   
   ssize_t nparsed = http_parser_execute(d->parser, &d->settings, d->buffer->orig_bytes, n);
-  
-  recv(d->socket, d->buffer->orig_bytes, nparsed, 0);
   
   if(d->parser->upgrade) {
     fprintf(stderr, "Websockets not supported\n");

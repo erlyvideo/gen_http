@@ -49,7 +49,7 @@ client_loop(Socket, Upstream) ->
             "\r\n",
             Reply
           ]),
-          {match, [Expiry]} = re:run(proplists:get_value("cache-control", Headers), "max-age=(\\d+)", [{capture,all_but_first,list}]),
+          {match, [Expiry]} = re:run(proplists:get_value("cache-control", Headers, "max-age=36000"), "max-age=(\\d+)", [{capture,all_but_first,list}]),
           Expires = Now + list_to_integer(Expiry),
           ets:insert(http_cache, {URL, Bin, Expires}),
           microtcp:send(Socket, Bin)

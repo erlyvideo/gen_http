@@ -32,11 +32,12 @@ listen(Port) ->
           {keepalive, true}, {backlog, 400}, {active, once}],
   {ok, Listen} = microtcp:listen(Port, Opts1),
   ?S({open_port,Listen}),
-  Bin = crypto:rand_bytes(?SIZE),
+  % Bin = crypto:rand_bytes(?SIZE),
+  Bin = "Hello World!\n",
   Reply = iolist_to_binary([
     "HTTP/1.1 200 OK\r\n",
     "Connection: Keep-Alive\r\n",
-    io_lib:format("Content-Length: ~p\r\n", [size(Bin)]),
+    io_lib:format("Content-Length: ~p\r\n", [iolist_size(Bin)]),
     "\r\n",
     Bin
   ]),
@@ -47,6 +48,10 @@ listen(Port) ->
   listen_loop(Listen, Bin).
   
 listen_loop(Listen, Bin) ->  
+  ?S({accept_delay}),
+  timer:sleep(100),
+  microtcp:active_once(Listen),
+  ?S(accepting),
   receive
     {tcp_connection, Listen, Socket} ->
       Pid = spawn(fun() ->
@@ -64,7 +69,10 @@ listen_loop(Listen, Bin) ->
       ?S({died_client, get(clients)}),
       listen_loop(Listen, Bin);
     Else ->
-      ?S(Else)  
+      ?S(Else)
+  % after
+  %   5000 ->
+  %     ?S({no_more_clients})    
   end.
 
 connect(Port) ->

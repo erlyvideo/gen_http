@@ -189,12 +189,12 @@ static ErlDrvSSizeT microtcp_drv_command(ErlDrvData handle, unsigned int command
       if(d->config.reuseaddr || 1) {
         fprintf(stderr, "Reusing listen addr\r\n");
         setsockopt(d->socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
+        setsockopt(d->socket, SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on)); 
       }
       if(d->config.keepalive) {
         setsockopt(d->socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
       }
       
-      activate_read(d);
       d->mode = LISTENER_MODE;
       listen(d->socket, d->config.backlog);
       memcpy(*rbuf, "ok", 2);
@@ -203,13 +203,13 @@ static ErlDrvSSizeT microtcp_drv_command(ErlDrvData handle, unsigned int command
     
     case CMD_ACTIVE_ONCE: {
       activate_read(d);
-      driver_set_timer(d->port, d->timeout);
+      if(d->mode == CLIENT_MODE) {
+        driver_set_timer(d->port, d->timeout);
+      }
       memcpy(*rbuf, "ok", 2);
       return 2;
     }
-    break;
-    default:
-    return 0;
+
   }
   return 0;
 }
@@ -341,6 +341,7 @@ static void accept_tcp(HTTP *d)
   socklen_t sock_len;
   struct sockaddr_in client_addr;
   int fd = accept(d->socket, (struct sockaddr *)&client_addr, &sock_len);
+  // deactivate_read(d);
   if(fd == -1) {
     return;
   }
@@ -451,6 +452,7 @@ static void microtcp_inet_timeout(ErlDrvData handle)
     ERL_DRV_PORT, driver_mk_atom("timeout"),
     ERL_DRV_TUPLE, 3
   };
+  driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
 }
 
 ErlDrvEntry microtcp_driver_entry = {

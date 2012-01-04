@@ -6,14 +6,16 @@
 -define(C(X), io:format("client:~p ~p~n", [?LINE,X])).
 -define(S(X), io:format("server:~p ~p~n", [?LINE,X])).
 
-main([]) ->
+main(Args) ->
   inets:start(),
   Listener = spawn(fun() ->
     listen(9000)
   end),
   erlang:monitor(process, Listener),
   
-  
+  case lists:member("bench", Args) of
+    true -> ok;
+    false ->
   Client = spawn(fun() ->
     connect(9000)
   end),
@@ -22,7 +24,8 @@ main([]) ->
   receive
     {'DOWN', _, process, Client, Reason1} -> io:format("client died ~p~n", [Reason1])
   end,
-  Listener ! stop,
+  Listener ! stop
+  end,
   receive
     {'DOWN', _, process, Listener, Reason2} -> io:format("listener died ~p~n", [Reason2])
   end,

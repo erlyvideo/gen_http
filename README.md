@@ -12,6 +12,7 @@ Microtcp has non-gen_tcp API:
 ```erlang
 % listener.erl:
 {ok, Listener} = microtcp:listen(8080, [{reuseaddr,true},{backlog,400}]),
+microtcp:active_once(Socket), % For accepting next connection
 receive
   {tcp_connection, Listen, Socket} ->
     Pid = spawn(fun() -> handle_client() end),

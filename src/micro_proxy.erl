@@ -65,7 +65,7 @@ client_loop(Socket, Upstream) ->
   microtcp:active_once(Socket),
   receive
     {http, Socket, _Method, URL, _Keepalive, _ReqHeaders} ->
-      ?D({get,URL}),
+      % ?D({get,URL}),
       case ets:lookup(http_cache, URL) of
         [{URL, Reply, _Expires}] ->
           microtcp:send(Socket, Reply);

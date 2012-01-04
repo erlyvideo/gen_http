@@ -49,7 +49,7 @@ load_and_save(Upstream, URL) ->
     Reply
   ]),
   {match, [Expiry]} = re:run(proplists:get_value("cache-control", Headers, "max-age=36000"), "max-age=(\\d+)", [{capture,all_but_first,list}]),
-  Expires = Now + list_to_integer(Expiry),
+  Expires = now() + list_to_integer(Expiry),
   ets:insert(http_cache, {URL, Bin, Expires}),
   Bin.
 
@@ -67,7 +67,7 @@ client_loop(Socket, Upstream) ->
     {http, Socket, _Method, URL, _Keepalive, _ReqHeaders} ->
       ?D({get,URL}),
       case ets:lookup(http_cache, URL) of
-        [{URL, Reply, Expires}] ->
+        [{URL, Reply, _Expires}] ->
           microtcp:send(Socket, Reply);
         [] ->
           Reply = load(Upstream, URL),

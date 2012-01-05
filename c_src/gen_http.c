@@ -28,7 +28,9 @@ static int request_count = 0;
 enum {
     CMD_LISTEN = 1,
     CMD_ACTIVE_ONCE = 2,
-    CMD_RECEIVE_BODY = 3
+    CMD_RECEIVE_BODY = 3,
+    CMD_STATS = 4,
+    CMD_ACCEPT_ONCE = 5
     };
 
 #pragma pack(1)
@@ -46,6 +48,13 @@ typedef struct {
   ErlDrvBinary *value;
 } Header;
 
+struct Acceptor;
+typedef struct Acceptor {
+  ErlDrvTermData pid;
+  ErlDrvMonitor monitor;
+  struct Acceptor *next;
+} Acceptor;
+
 #define HTTP_MAX_HEADERS 100
 
 typedef struct {
@@ -61,6 +70,8 @@ typedef struct {
   int headers_count;
   ErlDrvBinary *url;
   
+  Acceptor *acceptor;
+  
   Config config; // Only for listener mode
 } HTTP;
 
@@ -68,7 +79,7 @@ static void read_http(HTTP *d);
 static int receive_body(http_parser *p, const char *data, size_t len);
 static int skip_body(http_parser *p, const char *data, size_t len);
 
-static int microtcp_init(void) {
+static int gen_http_init(void) {
   atom_http = driver_mk_atom("http");
   atom_keepalive = driver_mk_atom("keepalive");
   atom_close = driver_mk_atom("close");
@@ -81,7 +92,7 @@ static int microtcp_init(void) {
 }
 
 
-static ErlDrvData microtcp_drv_start(ErlDrvPort port, char *buff)
+static ErlDrvData gen_http_drv_start(ErlDrvPort port, char *buff)
 {
     HTTP* d = (HTTP *)driver_alloc(sizeof(HTTP));
     bzero(d, sizeof(HTTP));
@@ -92,16 +103,33 @@ static ErlDrvData microtcp_drv_start(ErlDrvPort port, char *buff)
 }
 
 
-static void microtcp_drv_stop(ErlDrvData handle)
+static void gen_http_drv_stop(ErlDrvData handle)
 {
   HTTP* d = (HTTP *)handle;
-  if(d->mode == LISTENER_MODE) {
-    // fprintf(stderr, "```Listener port is closing: %d\r\n", ntohs(d->config.port));
-  }
   if(d->mode == CLIENT_MODE) {
     driver_free(d->parser);
     driver_free_binary(d->buffer);
   }
+  if(d->mode == LISTENER_MODE) {
+    Acceptor *a = d->acceptor;
+    Acceptor *next;
+    
+    ErlDrvTermData reply[] = {
+      ERL_DRV_ATOM, driver_mk_atom("http_closed"),
+      ERL_DRV_PORT, driver_mk_port(d->port),
+      ERL_DRV_TUPLE, 2
+    };
+    
+    while(a) {
+      next = a->next;
+      driver_send_term(d->port, a->pid, reply, sizeof(reply) / sizeof(reply[0]));      
+      driver_free(a);
+      a = next;
+    }
+    
+  }
+  
+  
   driver_select(d->port, (ErlDrvEvent)(d->socket), (int)DO_READ|DO_WRITE, 0);
   close(d->socket);
   driver_free((char*)handle);
@@ -120,7 +148,7 @@ static void tcp_exit(HTTP *d)
   driver_exit(d->port, 0);
 }
 
-static void microtcp_drv_outputv(ErlDrvData handle, ErlIOVec *ev)
+static void gen_http_drv_outputv(ErlDrvData handle, ErlIOVec *ev)
 {
   HTTP* d = (HTTP *)handle;
   driver_enqv(d->port, ev, 0);
@@ -130,7 +158,7 @@ static void microtcp_drv_outputv(ErlDrvData handle, ErlIOVec *ev)
 
 
 
-static void microtcp_drv_output(ErlDrvData handle, ErlDrvEvent event)
+static void gen_http_drv_output(ErlDrvData handle, ErlDrvEvent event)
 {
   HTTP* d = (HTTP*) handle;
   SysIOVec* vec;
@@ -167,7 +195,7 @@ static void deactivate_read(HTTP *d) {
   driver_select(d->port, (ErlDrvEvent)d->socket, DO_READ, 0);
 }
 
-static ErlDrvSSizeT microtcp_drv_command(ErlDrvData handle, unsigned int command, char *buf, 
+static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command, char *buf, 
                    ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen) {
   HTTP* d = (HTTP*) handle;
   
@@ -216,24 +244,53 @@ static ErlDrvSSizeT microtcp_drv_command(ErlDrvData handle, unsigned int command
     }
     
     case CMD_ACTIVE_ONCE: {
-      activate_read(d);
-      if(d->mode == CLIENT_MODE) {
-        driver_set_timer(d->port, d->timeout);
+      if(d->mode == LISTENER_MODE) {
+        memcpy(*rbuf, "error", 5);
+        return 5;
       }
+      
+      activate_read(d);
+      driver_set_timer(d->port, d->timeout);
       memcpy(*rbuf, "ok", 2);
       return 2;
     }
     
     case CMD_RECEIVE_BODY: {
+      if(d->mode == LISTENER_MODE) {
+        memcpy(*rbuf, "error", 5);
+        return 5;
+      }
       d->settings.on_body = receive_body;
       memcpy(*rbuf, "ok", 2);
       return 2;
     }
     
-    case 4: {
+    case CMD_STATS: {
       int count = htonl(request_count);
       memcpy(*rbuf, &count, 4);
       return 4;
+    }
+    
+    case CMD_ACCEPT_ONCE: {
+      if(d->mode != LISTENER_MODE) {
+        memcpy(*rbuf, "error", 5);
+        return 5;
+      }
+
+      Acceptor *acceptor = driver_alloc(sizeof(Acceptor));
+      acceptor->next = d->acceptor;
+      acceptor->pid = driver_caller(d->port);
+      
+	    if (driver_monitor_process(d->port, acceptor->pid ,&acceptor->monitor) != 0) {
+        driver_free(acceptor);
+        memcpy(*rbuf, "error", 5);
+        return 5;
+  	  }
+      activate_read(d);
+      d->acceptor = acceptor;
+      
+      memcpy(*rbuf, "ok", 2);
+      return 2;
     }
 
   }
@@ -384,8 +441,46 @@ static int on_message_complete(http_parser *p) {
   return 0;
 }
 
+static void gen_http_process_exit(ErlDrvTermData handle, ErlDrvMonitor *monitor) {
+  HTTP *d = (HTTP *)handle;
+  ErlDrvTermData pid = driver_get_monitored_process(d->port, monitor);
+  Acceptor *a, *next;
+  Acceptor *root = NULL;
+  Acceptor *deleting = NULL;
+  
+  a = d->acceptor;
+  
+  while(a) {
+    next = a->next;
+    if(a->pid == pid) {
+      a->next = deleting;
+      deleting = a;
+    } else {
+      a->next = root;
+      root = a;
+    }
+    a = next;
+  }
+  d->acceptor = root;
+  while(deleting) {
+    // fprintf(stderr, "Removing dead acceptor\r\n");
+    
+    
+    driver_demonitor_process(d->port, &deleting->monitor);
+    next = deleting->next;
+    driver_free(deleting);
+    deleting = next;
+  }
+}
+
 static void accept_tcp(HTTP *d)
 {
+  
+  if(!d->acceptor) {
+    deactivate_read(d);
+    return;
+  }
+  
   socklen_t sock_len;
   struct sockaddr_in client_addr;
   int fd = accept(d->socket, (struct sockaddr *)&client_addr, &sock_len);
@@ -400,13 +495,21 @@ static void accept_tcp(HTTP *d)
     driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
     return;
   }
+  
+  ErlDrvTermData owner = d->acceptor->pid;
+  driver_demonitor_process(d->port, &d->acceptor->monitor);
+  Acceptor *old = d->acceptor;
+  d->acceptor = d->acceptor->next;
+  if(d->acceptor) activate_read(d);
+  driver_free(old);
+  
   HTTP* c = driver_alloc(sizeof(HTTP));
 
-  c->owner_pid = d->owner_pid;
+  c->owner_pid = owner;
   c->socket = fd;
   c->mode = CLIENT_MODE;
 
-  ErlDrvPort client = driver_create_port(d->port, d->owner_pid, "microtcp_drv", (ErlDrvData)c);
+  ErlDrvPort client = driver_create_port(d->port, owner, "gen_http_drv", (ErlDrvData)c);
   c->port = client;
   c->timeout = d->config.timeout;
   c->parser = driver_alloc(sizeof(http_parser));
@@ -429,11 +532,11 @@ static void accept_tcp(HTTP *d)
     ERL_DRV_PORT, driver_mk_port(client),
     ERL_DRV_TUPLE, 3
   };
-  driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  driver_send_term(d->port, owner, reply, sizeof(reply) / sizeof(reply[0]));
 }
 
 
-static void microtcp_drv_input(ErlDrvData handle, ErlDrvEvent event)
+static void gen_http_drv_input(ErlDrvData handle, ErlDrvEvent event)
 {
   HTTP* d = (HTTP*) handle;
   
@@ -481,7 +584,7 @@ static void read_http(HTTP *d) {
     if(d->parser->pause_on_body) {
       // fprintf(stderr, "Stopped parsing because body met: %d(%d): %.*s\r\n", (int)n, d->parser->state, (int)n, d->buffer->orig_bytes);
     } else {
-      fprintf(stderr, "Read(%d): %.*s\r\n", (int)n, (int)n, d->buffer->orig_bytes);
+      // fprintf(stderr, "Read(%d): %.*s\r\n", (int)n, (int)n, d->buffer->orig_bytes);
       fprintf(stderr, "Handle HTTP error: %s(%s)\n", http_errno_name(d->parser->http_errno), http_errno_description(d->parser->http_errno));
       tcp_exit(d);
       return;
@@ -500,7 +603,7 @@ static void read_http(HTTP *d) {
 }
 
 
-static void microtcp_inet_timeout(ErlDrvData handle)
+static void gen_http_inet_timeout(ErlDrvData handle)
 {
   HTTP* d = (HTTP *)handle;
   ErlDrvTermData reply[] = {
@@ -512,19 +615,19 @@ static void microtcp_inet_timeout(ErlDrvData handle)
   driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
 }
 
-ErlDrvEntry microtcp_driver_entry = {
-    microtcp_init,			/* F_PTR init, N/A */
-    microtcp_drv_start,		/* L_PTR start, called when port is opened */
-    microtcp_drv_stop,		/* F_PTR stop, called when port is closed */
+ErlDrvEntry gen_http_driver_entry = {
+    gen_http_init,			/* F_PTR init, N/A */
+    gen_http_drv_start,		/* L_PTR start, called when port is opened */
+    gen_http_drv_stop,		/* F_PTR stop, called when port is closed */
     NULL,	                /* F_PTR output, called when erlang has sent */
-    microtcp_drv_input,		/* F_PTR ready_input, called when input descriptor ready */
-    microtcp_drv_output,	/* F_PTR ready_output, called when output descriptor ready */
-    "microtcp_drv",		/* char *driver_name, the argument to open_port */
+    gen_http_drv_input,		/* F_PTR ready_input, called when input descriptor ready */
+    gen_http_drv_output,	/* F_PTR ready_output, called when output descriptor ready */
+    "gen_http_drv",		/* char *driver_name, the argument to open_port */
     NULL,			/* F_PTR finish, called when unloaded */
     NULL,     /* void *handle */
-    microtcp_drv_command,			/* F_PTR control, port_command callback */
-    microtcp_inet_timeout,			/* F_PTR timeout, reserved */
-    microtcp_drv_outputv,	/* F_PTR outputv, reserved */
+    gen_http_drv_command,			/* F_PTR control, port_command callback */
+    gen_http_inet_timeout,			/* F_PTR timeout, reserved */
+    gen_http_drv_outputv,	/* F_PTR outputv, reserved */
     NULL,                      /* ready_async */
     NULL,                             /* flush */
     NULL,                             /* call */
@@ -534,10 +637,10 @@ ErlDrvEntry microtcp_driver_entry = {
     ERL_DRV_EXTENDED_MINOR_VERSION,   /* ERL_DRV_EXTENDED_MINOR_VERSION */
     ERL_DRV_FLAG_USE_PORT_LOCKING,     /* ERL_DRV_FLAGs */
     NULL,     /* void *handle2 */
-    NULL,     /* process_exit */
+    gen_http_process_exit,     /* process_exit */
     NULL      /* stop_select */
 };
-DRIVER_INIT(microtcp_drv) /* must match name in driver_entry */
+DRIVER_INIT(gen_http_drv) /* must match name in driver_entry */
 {
-    return &microtcp_driver_entry;
+    return &gen_http_driver_entry;
 }

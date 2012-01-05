@@ -1,23 +1,26 @@
 %%% @author     Max Lapshin <max@maxidoors.ru> [http://erlyvideo.org]
 %%% @copyright  2009-2011 Max Lapshin
-%%% @doc        Special TCP driver
+%%% @doc        HTTP linked-in driver
 %%% @reference  See <a href="http://erlyvideo.org/" target="_top">http://erlyvideo.org/</a> for more information
 %%% @end
 %%%
-%%% This file is part of erlyvideo.
+%%% Permission is hereby granted, free of charge, to any person obtaining a copy
+%%% of this software and associated documentation files (the "Software"), to
+%%% deal in the Software without restriction, including without limitation the
+%%% rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+%%% sell copies of the Software, and to permit persons to whom the Software is
+%%% furnished to do so, subject to the following conditions:
 %%% 
-%%% erlyvideo is free software: you can redistribute it and/or modify
-%%% it under the terms of the GNU General Public License as published by
-%%% the Free Software Foundation, either version 3 of the License, or
-%%% (at your option) any later version.
-%%%
-%%% erlyvideo is distributed in the hope that it will be useful,
-%%% but WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-%%% GNU General Public License for more details.
-%%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with erlyvideo.  If not, see <http://www.gnu.org/licenses/>.
+%%% The above copyright notice and this permission notice shall be included in
+%%% all copies or substantial portions of the Software.
+%%% 
+%%% THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+%%% IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+%%% FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+%%% AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+%%% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+%%% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+%%% IN THE SOFTWARE.
 %%%
 %%%---------------------------------------------------------------------------------------
 -module(gen_http).
@@ -27,6 +30,7 @@
 % Server API
 -export([listen/2, listen/1, controlling_process/2, active_once/1, send/2, close/1, peername/1]).
 -export([receive_body/2]).
+-export([accept_once/1]).
 
 % Client API
 -export([connect/3, connect/2]).
@@ -36,6 +40,8 @@ listen(Port) -> listen(Port, []).
 -define(CMD_LISTEN, 1).
 -define(CMD_ACTIVE_ONCE, 2).
 -define(CMD_RECEIVE_BODY, 3).
+-define(CMD_STATS, 4).
+-define(CMD_ACCEPT_ONCE, 5).
 
 listen(Port, Options) ->
   Path = case code:lib_dir(gen_http,priv) of
@@ -94,6 +100,9 @@ close(Socket) when is_port(Socket) ->
 active_once(Socket) ->
   port_control(Socket, ?CMD_ACTIVE_ONCE, <<>>).
 
+accept_once(Socket) ->
+  port_control(Socket, ?CMD_ACCEPT_ONCE, <<>>).
+
 
 send(Socket, Bin) when is_port(Socket) ->
   port_command(Socket, Bin).
@@ -102,7 +111,7 @@ send(Socket, Bin) when is_port(Socket) ->
 connect(Host, Port) ->
   connect(Host, Port, []).
   
-connect(Host, Port, Options) ->
+connect(_Host, _Port, _Options) ->
   erlang:throw(not_implemented).
 
 

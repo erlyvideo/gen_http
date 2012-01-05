@@ -6,27 +6,61 @@
 
 main(Args) ->
   inets:start(),
-  Listener = spawn(fun() ->
-    listen(9000)
-  end),
-  erlang:monitor(process, Listener),
+  Opts1 = [binary, {packet, raw}, {reuseaddr, true}, 
+          {keepalive, true}, {backlog, 4000}, {active, once}],
+  {ok, Listen} = gen_http:listen(9000, Opts1),
   
-  case lists:member("bench", Args) of
-    true -> ok;
-    false ->
+  ets:new(http_cache, [set,named_table,public]),
+  Bin = ["Hello World!\n" || _ <- lists:seq(1,2)],
+  ets:insert(http_cache, {<<"/index.html">>, reply(Bin, keepalive)}),
+  ets:insert(http_cache, {counter, 0}),
+  
+  [spawn(fun() -> 
+    gen_http:accept_once(Listen), 
+    timer:sleep(550),
+    Timeout = 10000,
+    receive
+      {http_connection, Listen, _Sock} -> ?S(accepted);
+      {http_closed, Listen} -> ?S(closed)
+    after
+      Timeout -> ?S(timeout)
+    end
+  end) || _ <- lists:seq(1,40)],
+  
+  Listener1 = spawn(fun() ->
+    listen(Listen)
+  end),
+  erlang:monitor(process, Listener1),
+
+  Listener2 = spawn(fun() ->
+    listen(Listen)
+  end),
+  erlang:monitor(process, Listener2),
+  
+  
+  timer:sleep(500),
   Client = spawn(fun() ->
     connect(9000)
   end),
   erlang:monitor(process, Client),
   
+  timer:sleep(1000),
+  
   receive
     {'DOWN', _, process, Client, Reason1} -> io:format("client died ~p~n", [Reason1])
   end,
-  Listener ! stop
+  Listener1 ! stop,
+  Listener2 ! stop,
+  
+  receive
+    {'DOWN', _, process, Listener1, Reason2} -> io:format("listener1 died ~p~n", [Reason2])
   end,
   receive
-    {'DOWN', _, process, Listener, Reason2} -> io:format("listener died ~p~n", [Reason2])
+    {'DOWN', _, process, Listener2, Reason3} -> io:format("listener1 died ~p~n", [Reason3])
   end,
+  
+  timer:sleep(500),
+  gen_http:close(Listen),
   ok.
 
 -define(SIZE, 100000).
@@ -46,18 +80,11 @@ reply(Reply, Keepalive) ->
     Reply
   ]).
 
-listen(Port) ->
-  Opts1 = [binary, {packet, raw}, {reuseaddr, true}, 
-          {keepalive, true}, {backlog, 4000}, {active, once}],
-  {ok, Listen} = gen_http:listen(Port, Opts1),
+listen(Listen) ->
   ?S({open_port,Listen}),
   % Bin = crypto:rand_bytes(?SIZE),
-  Bin = ["Hello World!\n" || _ <- lists:seq(1,1000)],
   timer:send_interval(1000, dump),
   
-  ets:new(http_cache, [set,named_table,public]),
-  ets:insert(http_cache, {<<"/index.html">>, reply(Bin, keepalive)}),
-  ets:insert(http_cache, {counter, 0}),
   put(prev_request_count, 0),
   put(clients, 0),
   % Spawners = [spawn_link(fun() ->
@@ -68,10 +95,12 @@ listen(Port) ->
 listen_loop(Listen) ->  
   % ?S({accept_delay}),
   % timer:sleep(100),
-  gen_http:active_once(Listen),
+  gen_http:accept_once(Listen),
   % ?S(accepting),
   receive
     {http_connection, Listen, Socket} ->
+      ?S({listener,self(),sleep_after_accept}),
+      timer:sleep(1000),
       Pid = spawn(fun() ->
         client_launch()
       end),
@@ -96,8 +125,6 @@ listen_loop(Listen) ->
         _ -> ?S({requests, Requests}), put(prev_request_count, Requests)
       end,
       listen_loop(Listen);
-    stop ->
-      gen_http:close(Listen);  
     Else ->
       ?S(Else)
   % after
@@ -106,11 +133,15 @@ listen_loop(Listen) ->
   end.
 
 connect(Port) ->
+  spawn(fun() ->
+    {ok, RR} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
+    ?C({spawned,RR})
+  end),
   {ok, _R1} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
   ?C(_R1),
   Post = "abcdefghikhjlpmnopqrstuvwxyz",
-  [httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", Post}, [], []) || _N <- lists:seq(1,1000)],
-  {ok, _R2} = httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", Post}, [], []),
+  % [httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", Post}, [], []) || _N <- lists:seq(1,1000)],
+  % {ok, _R2} = httpc:request(post, {"http://localhost:"++integer_to_list(Port)++"/index.html", [], "application/octet-stream", Post}, [], []),
   % ?C(_R2),
   {ok, _R3} = httpc:request("http://localhost:"++integer_to_list(Port)++"/index.html"),
   ?C(_R3),
@@ -156,13 +187,12 @@ client_loop(Socket) ->
       if Keepalive == keepalive ->
         client_loop(Socket);
       true ->
-        gen_http:close(Socket),
         ok
       end;  
     {http_closed, Socket} ->
       ok;
     {http_error, Socket, timeout} ->
-      gen_http:close(Socket)  
+      ok
   end.
 
 receive_body(Socket, Acc) ->

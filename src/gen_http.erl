@@ -24,8 +24,12 @@
 -author('Max Lapshin <max@maxidoors.ru>').
 -include("log.hrl").
 
+% Server API
 -export([listen/2, listen/1, controlling_process/2, active_once/1, send/2, close/1, peername/1]).
 -export([receive_body/2]).
+
+% Client API
+-export([connect/3, connect/2]).
 
 listen(Port) -> listen(Port, []).
 
@@ -93,5 +97,15 @@ active_once(Socket) ->
 
 send(Socket, Bin) when is_port(Socket) ->
   port_command(Socket, Bin).
+
+
+connect(Host, Port) ->
+  connect(Host, Port, []).
+  
+connect(Host, Port, Options) ->
+  erlang:throw(not_implemented).
+
+
+
 
 

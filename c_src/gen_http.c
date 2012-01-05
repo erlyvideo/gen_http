@@ -195,6 +195,14 @@ static void deactivate_read(HTTP *d) {
   driver_select(d->port, (ErlDrvEvent)d->socket, DO_READ, 0);
 }
 
+static int errno_reply(char **rbuf) {
+  char *s = *rbuf;
+  *s = 0;
+  char *err = erl_errno_id(errno);
+  memcpy(s+1, err, strlen(err));
+  return strlen(err)+1;
+}
+
 static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command, char *buf, 
                    ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen) {
   HTTP* d = (HTTP*) handle;
@@ -216,29 +224,32 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       si.sin_port = d->config.port; // It comes in network byte order
       si.sin_addr.s_addr = htonl(INADDR_ANY);
       if(bind(d->socket, (struct sockaddr *)&si, sizeof(si)) == -1) {
-        driver_failure_posix(d->port, errno);
-        return 0;
+        return errno_reply(rbuf);
       }
       flags = fcntl(d->socket, F_GETFL);
       if(flags == -1) {
-        driver_failure_posix(d->port, errno);
-        return 0;
+        return errno_reply(rbuf);
       }
       if(fcntl(d->socket, F_SETFL, flags | O_NONBLOCK) == -1) {
-        driver_failure_posix(d->port, errno);
-        return 0;
+        return errno_reply(rbuf);
       }
       
       int on = 1;
       if(d->config.reuseaddr || 1) {
-        setsockopt(d->socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
+        if(setsockopt(d->socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) == -1) {
+          return errno_reply(rbuf);
+        }
       }
       if(d->config.keepalive) {
-        setsockopt(d->socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+        if(setsockopt(d->socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)) == -1) {
+          return errno_reply(rbuf);
+        }
       }
       
       d->mode = LISTENER_MODE;
-      listen(d->socket, d->config.backlog);
+      if(listen(d->socket, d->config.backlog) == -1) {
+        return errno_reply(rbuf);
+      }
       memcpy(*rbuf, "ok", 2);
       return 2;
     }

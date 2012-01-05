@@ -27,21 +27,38 @@
 -author('Max Lapshin <max@maxidoors.ru>').
 -include("log.hrl").
 
+% Common API
+-export([send/2, close/1, recv/2, recv/3, setopts/2]).
+
 % Server API
--export([listen/2, listen/1, controlling_process/2, active_once/1, send/2, close/1, peername/1]).
+-export([listen/2, listen/1, controlling_process/2, active_once/1, peername/1]).
 -export([receive_body/2]).
--export([accept_once/1]).
+-export([accept_once/1, accept/2]).
 
 % Client API
 -export([connect/3, connect/2]).
 
-listen(Port) -> listen(Port, []).
+% Cowboy transport API
+-export([name/0, messages/0]).
 
 -define(CMD_LISTEN, 1).
 -define(CMD_ACTIVE_ONCE, 2).
 -define(CMD_RECEIVE_BODY, 3).
 -define(CMD_STATS, 4).
 -define(CMD_ACCEPT_ONCE, 5).
+
+
+name() -> gen_http.
+
+messages() -> {http_connection, http, http_closed, http_error}.
+
+
+listen(Port) when is_integer(Port) ->
+  listen(Port, []);
+
+listen(Options) when is_list(Options) ->
+  Port = proplists:get_value(port, Options),
+  listen(Port, Options).
 
 listen(Port, Options) ->
   Path = case code:lib_dir(gen_http,priv) of
@@ -65,8 +82,15 @@ listen(Port, Options) ->
   Timeout = proplists:get_value(timeout, Options, 60000),
   Backlog = proplists:get_value(backlog, Options, 30),
   
-  <<"ok">> = port_control(Socket, ?CMD_LISTEN, <<Port:16, Backlog:16/little, Reuseaddr, Keepalive, Timeout:16/little>>),
-  {ok, Socket}.
+  Reply = port_control(Socket, ?CMD_LISTEN, <<Port:16, Backlog:16/little, Reuseaddr, Keepalive, Timeout:16/little>>),
+  case parse_reply(Reply) of
+    ok -> {ok, Socket};
+    ListenError -> ListenError
+  end.
+
+
+parse_reply(<<"ok">>) -> ok;
+parse_reply(<<0, Error/binary>>) -> {error, binary_to_atom(Error, latin1)}.
 
 
 controlling_process(Socket, NewOwner) when is_port(Socket), is_pid(NewOwner) ->
@@ -95,13 +119,60 @@ peername(Socket) when is_port(Socket) ->
   {ok, {{0,0,0,0}, 4000}}.
 
 close(Socket) when is_port(Socket) ->
-  erlang:port_close(Socket).
+  unlink(Socket),
+  (catch erlang:port_close(Socket)),
+  flush(Socket).
+
+flush(Socket) ->
+  receive
+    {http_closed, Socket} -> flush(Socket);
+    {http_error, Socket, _} -> flush(Socket);
+    {http, Socket, _} -> flush(Socket);
+    {http_connection, Socket, S} -> close(S), flush(Socket)
+  after
+    0 -> ok
+  end.  
 
 active_once(Socket) ->
   port_control(Socket, ?CMD_ACTIVE_ONCE, <<>>).
 
 accept_once(Socket) ->
   port_control(Socket, ?CMD_ACCEPT_ONCE, <<>>).
+
+accept(Listen, Timeout) ->
+  accept_once(Listen),
+  receive
+    {http_connection, Listen, Socket} -> {ok, Socket};
+    {http_closed, Listen} -> {error, closed};
+    {http_error, Listen, Error} -> {error, Error}
+  after
+    Timeout -> {error, timeout}
+  end.  
+
+recv(Socket, Length) ->
+  recv(Socket, Length, infinity).
+
+recv(Socket, Length, Timeout) ->
+  recv(Socket, Length, Timeout, []).
+
+recv(Socket, Length, Timeout, Acc) ->
+  gen_http:active_once(Socket),
+  receive
+    {http, Socket, eof} -> {ok, iolist_to_binary(lists:reverse(Acc))};
+    {http_error, Socket, Error} -> {error, Error};
+    {http, Socket, Bin} ->
+      Acc1 = [Bin|Acc],
+      case iolist_size(Acc1) of
+        S when S > Length -> {ok, iolist_to_binary(lists:reverse(Acc1))};
+        _ -> recv(Socket, Length, Timeout, Acc1)
+      end
+    after
+      Timeout -> {error, timeout}
+  end.
+  
+  
+setopts(_Socket, _Options) ->
+  ok.
 
 
 send(Socket, Bin) when is_port(Socket) ->

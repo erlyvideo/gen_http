@@ -46,7 +46,7 @@
 -define(CMD_RECEIVE_BODY, 3).
 -define(CMD_STATS, 4).
 -define(CMD_ACCEPT_ONCE, 5).
-
+-define(INET_REQ_GETFD, 14).
 
 name() -> gen_http.
 
@@ -70,7 +70,8 @@ listen(Port, Options) ->
   	{error, already_loaded} -> ok;
   	{error, Error} -> exit({error, {could_not_load_driver,erl_ddll:format_error(Error)}})
   end,
-  Socket = open_port({spawn, gen_http_drv}, [binary]),
+  Socket = erlang:open_port({spawn, gen_http_drv}, [binary]),
+  erlang:port_set_data(Socket, inet_tcp),
   Reuseaddr = case proplists:get_value(reuseaddr, Options, true) of
     true -> 1;
     _ -> 0
@@ -89,8 +90,8 @@ listen(Port, Options) ->
   end.
 
 
-parse_reply(<<"ok">>) -> ok;
-parse_reply(<<0, Error/binary>>) -> {error, binary_to_atom(Error, latin1)}.
+parse_reply("ok") -> ok;
+parse_reply([0, Error]) -> {error, list_to_atom(Error)}.
 
 
 controlling_process(Socket, NewOwner) when is_port(Socket), is_pid(NewOwner) ->
@@ -101,7 +102,7 @@ controlling_process(Socket, NewOwner) when is_port(Socket), is_pid(NewOwner) ->
 	    {error, einval};
 	_ ->
 		try erlang:port_connect(Socket, NewOwner) of
-		  true -> 
+		  true ->
 			  unlink(Socket), %% unlink from port
 				ok
 		catch
@@ -111,7 +112,7 @@ controlling_process(Socket, NewOwner) when is_port(Socket), is_pid(NewOwner) ->
   end.
 
 receive_body(Socket, ChunkSize) ->
-  <<"ok">> = port_control(Socket, ?CMD_RECEIVE_BODY, <<ChunkSize:32/little>>),
+  "ok" = port_control(Socket, ?CMD_RECEIVE_BODY, <<ChunkSize:32/little>>),
   ok.
   
 
@@ -142,7 +143,9 @@ accept_once(Socket) ->
 accept(Listen, Timeout) ->
   accept_once(Listen),
   receive
-    {http_connection, Listen, Socket} -> {ok, Socket};
+    {http_connection, Listen, Socket} -> 
+      erlang:port_set_data(Socket, inet_tcp),
+      {ok, Socket};
     {http_closed, Listen} -> {error, closed};
     {http_error, Listen, Error} -> {error, Error}
   after
@@ -176,7 +179,12 @@ setopts(_Socket, _Options) ->
 
 
 send(Socket, Bin) when is_port(Socket) ->
-  port_command(Socket, Bin).
+  port_command(Socket, Bin),
+  receive
+    {http, Socket, empty} -> ok;
+    {http_error, Socket, Error} -> {error, Error};
+    {http_closed, Socket} -> {error, closed}
+  end.
 
 
 connect(Host, Port) ->

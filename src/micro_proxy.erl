@@ -69,7 +69,7 @@ client_launch(Upstream) ->
 client_loop(Socket, Upstream) ->
   gen_http:active_once(Socket),
   receive
-    {http, Socket, _Method, URL, _Keepalive, _ReqHeaders} ->
+    {http, Socket, _Method, URL, _Keepalive, _Version, _ReqHeaders} ->
       % ?D({get,URL}),
       case ets:lookup(http_cache, URL) of
         [{URL, Reply, _Expires}] ->

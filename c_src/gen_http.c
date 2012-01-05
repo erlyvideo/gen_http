@@ -24,6 +24,7 @@ static ErlDrvTermData atom_http;
 static ErlDrvTermData atom_keepalive;
 static ErlDrvTermData atom_close;
 static ErlDrvTermData atom_eof;
+static ErlDrvTermData atom_empty;
 static ErlDrvTermData method_atoms[HTTP_PATCH+1];
 
 
@@ -94,7 +95,9 @@ enum {
     CMD_ACTIVE_ONCE = 2,
     CMD_RECEIVE_BODY = 3,
     CMD_STATS = 4,
-    CMD_ACCEPT_ONCE = 5
+    CMD_ACCEPT_ONCE = 5,
+    INET_REQ_GETFD = 14,
+    INET_REQ_IGNOREFD = 28
     };
 
 #pragma pack(1)
@@ -149,6 +152,7 @@ static int gen_http_init(void) {
   atom_keepalive = driver_mk_atom("keepalive");
   atom_close = driver_mk_atom("close");
   atom_eof = driver_mk_atom("eof");
+  atom_empty = driver_mk_atom("empty");
   int i;
   for(i = 0; i <= HTTP_PATCH; i++) {
     method_atoms[i] = driver_mk_atom((char *)http_method_str(i));
@@ -168,7 +172,7 @@ static ErlDrvData gen_http_drv_start(ErlDrvPort port, char *buff)
     HTTP* d = (HTTP *)driver_alloc(sizeof(HTTP));
     bzero(d, sizeof(HTTP));
     d->port = port;
-    set_port_control_flags(port, PORT_CONTROL_FLAG_BINARY);
+    // set_port_control_flags(port, PORT_CONTROL_FLAG_BINARY);
     d->owner_pid = driver_caller(port);
     return (ErlDrvData)d;
 }
@@ -253,6 +257,17 @@ static void gen_http_drv_output(ErlDrvData handle, ErlDrvEvent event)
     }
   } else {
     ErlDrvSizeT rest = driver_deq(d->port, written);
+    
+    if(rest == 0) {
+      ErlDrvTermData reply[] = {
+        ERL_DRV_ATOM, atom_http,
+        ERL_DRV_PORT, driver_mk_port(d->port),
+        ERL_DRV_ATOM, atom_empty,
+        ERL_DRV_TUPLE, 3
+      };
+      
+      driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+    }
     // fprintf(stderr, "Network write: %d (%d)\r\n", (int)written, (int)rest);
     
   }
@@ -374,6 +389,19 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       memcpy(*rbuf, "ok", 2);
       return 2;
     }
+    
+    case INET_REQ_GETFD: {
+      char *ret = *rbuf;
+      *ret = 1;
+      int fd = htonl(d->socket);
+      memcpy(ret+1, &fd, 4);
+      return 5;
+    }
+    
+    case INET_REQ_IGNOREFD: {
+      **rbuf = 1;
+      return 1;
+    }
 
   }
   return 0;
@@ -451,7 +479,7 @@ static int on_headers_complete(http_parser *p) {
   
   deactivate_read(d);
 
-  int count = 2 + 2 + 2 + 4 + 6 + d->headers_count*(4*2 + 2) + 3 + 2;
+  int count = 2 + 2 + 2 + 2 + 4 + 6 + d->headers_count*(4*2 + 2) + 3 + 2;
   ErlDrvTermData reply[count];
   
   int i = 0;
@@ -472,6 +500,14 @@ static int on_headers_complete(http_parser *p) {
   
   reply[i++] = ERL_DRV_ATOM;
   reply[i++] = http_should_keep_alive(p) ? atom_keepalive : atom_close;
+  
+  reply[i++] = ERL_DRV_UINT;
+  reply[i++] = (ErlDrvTermData)p->http_major;
+  reply[i++] = ERL_DRV_UINT;
+  reply[i++] = (ErlDrvTermData)p->http_minor;
+  reply[i++] = ERL_DRV_TUPLE;
+  reply[i++] = 2;
+  
   
   int j;
   
@@ -505,7 +541,7 @@ static int on_headers_complete(http_parser *p) {
   reply[i++] = j+1;
   
   reply[i++] = ERL_DRV_TUPLE;
-  reply[i++] = 6;
+  reply[i++] = 7;
   
   driver_output_term(d->port, reply, i);
   // driver_free(reply);
@@ -641,7 +677,7 @@ static void accept_tcp(HTTP *d)
   http_parser_init(c->parser, HTTP_REQUEST);
   c->buffer = driver_alloc_binary(10240);
   driver_set_timer(c->port, c->timeout);
-  set_port_control_flags(c->port, PORT_CONTROL_FLAG_BINARY);
+  // set_port_control_flags(c->port, PORT_CONTROL_FLAG_BINARY);
   ErlDrvTermData reply[] = {
     ERL_DRV_ATOM, driver_mk_atom("http_connection"),
     ERL_DRV_PORT, driver_mk_port(d->port),

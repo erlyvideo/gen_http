@@ -161,7 +161,7 @@ client_loop(Socket) ->
   %     ?S({Bin, size(Bin)})
   % end,  
   receive
-    {http, Socket, Method, URL, Keepalive, Headers} = Req ->
+    {http, Socket, Method, URL, Keepalive, _Version, Headers} = Req ->
       ets:update_counter(http_cache, counter, 1),
       case ets:lookup(http_cache, URL) of
         [] ->

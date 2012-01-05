@@ -20,7 +20,7 @@
 %%% along with erlyvideo.  If not, see <http://www.gnu.org/licenses/>.
 %%%
 %%%---------------------------------------------------------------------------------------
--module(microtcp).
+-module(gen_http).
 -author('Max Lapshin <max@maxidoors.ru>').
 -include("log.hrl").
 
@@ -34,16 +34,16 @@ listen(Port) -> listen(Port, []).
 -define(CMD_RECEIVE_BODY, 3).
 
 listen(Port, Options) ->
-  Path = case code:lib_dir(microtcp,priv) of
+  Path = case code:lib_dir(gen_http,priv) of
     P when is_list(P) -> P;
     _ -> filename:dirname(code:which(?MODULE))++"/../priv/"
   end,
-  case erl_ddll:load_driver(Path, microtcp_drv) of
+  case erl_ddll:load_driver(Path, gen_http_drv) of
   	ok -> ok;
   	{error, already_loaded} -> ok;
   	{error, Error} -> exit({error, {could_not_load_driver,erl_ddll:format_error(Error)}})
   end,
-  Socket = open_port({spawn, microtcp_drv}, [binary]),
+  Socket = open_port({spawn, gen_http_drv}, [binary]),
   Reuseaddr = case proplists:get_value(reuseaddr, Options, true) of
     true -> 1;
     _ -> 0

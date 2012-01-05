@@ -6,7 +6,7 @@
 -compile({no_auto_import,[now/0]}).
 
 listen(Upstream) ->
-  {ok, Listen} = microtcp:listen(9000, [{backlog,4000}]),
+  {ok, Listen} = gen_http:listen(9000, [{backlog,4000}]),
   ets:new(http_cache, [set,named_table,public]),
   inets:start(),
   spawn(fun() -> reloader(Upstream) end),
@@ -15,13 +15,13 @@ listen(Upstream) ->
 
 
 listen_loop(Listen, Upstream) ->
-  microtcp:active_once(Listen),
+  gen_http:active_once(Listen),
   receive
     {http_connection, Listen, Socket} ->
       Pid = spawn(fun() ->
         client_launch(Upstream)
       end),
-      microtcp:controlling_process(Socket, Pid),
+      gen_http:controlling_process(Socket, Pid),
       Pid ! {socket, Socket},
       listen_loop(Listen, Upstream);
     dump ->
@@ -67,16 +67,16 @@ client_launch(Upstream) ->
   end.
 
 client_loop(Socket, Upstream) ->
-  microtcp:active_once(Socket),
+  gen_http:active_once(Socket),
   receive
     {http, Socket, _Method, URL, _Keepalive, _ReqHeaders} ->
       % ?D({get,URL}),
       case ets:lookup(http_cache, URL) of
         [{URL, Reply, _Expires}] ->
-          microtcp:send(Socket, Reply);
+          gen_http:send(Socket, Reply);
         [] ->
           Reply = load(Upstream, URL),
-          microtcp:send(Socket, Reply)
+          gen_http:send(Socket, Reply)
       end,
       client_loop(Socket, Upstream);
     {http, Socket, _} ->

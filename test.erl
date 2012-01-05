@@ -35,7 +35,7 @@ keepalive(keepalive) -> "Keep-Alive";
 keepalive(close) -> "Close".
 
 reply(Socket, Reply, Keepalive) ->
-  microtcp:send(Socket, reply(Reply, Keepalive)).
+  gen_http:send(Socket, reply(Reply, Keepalive)).
 
 reply(Reply, Keepalive) ->
   iolist_to_binary([
@@ -49,7 +49,7 @@ reply(Reply, Keepalive) ->
 listen(Port) ->
   Opts1 = [binary, {packet, raw}, {reuseaddr, true}, 
           {keepalive, true}, {backlog, 4000}, {active, once}],
-  {ok, Listen} = microtcp:listen(Port, Opts1),
+  {ok, Listen} = gen_http:listen(Port, Opts1),
   ?S({open_port,Listen}),
   % Bin = crypto:rand_bytes(?SIZE),
   Bin = ["Hello World!\n" || _ <- lists:seq(1,1000)],
@@ -68,14 +68,14 @@ listen(Port) ->
 listen_loop(Listen) ->  
   % ?S({accept_delay}),
   % timer:sleep(100),
-  microtcp:active_once(Listen),
+  gen_http:active_once(Listen),
   % ?S(accepting),
   receive
     {http_connection, Listen, Socket} ->
       Pid = spawn(fun() ->
         client_launch()
       end),
-      microtcp:controlling_process(Socket, Pid),
+      gen_http:controlling_process(Socket, Pid),
       Pid ! {socket, Socket},
       % ?S({client,connected});
       erlang:monitor(process, Pid),
@@ -97,7 +97,7 @@ listen_loop(Listen) ->
       end,
       listen_loop(Listen);
     stop ->
-      microtcp:close(Listen);  
+      gen_http:close(Listen);  
     Else ->
       ?S(Else)
   % after
@@ -124,7 +124,7 @@ client_launch() ->
   end.
 
 client_loop(Socket) ->
-  microtcp:active_once(Socket),
+  gen_http:active_once(Socket),
   % receive
   %   {tcp, Socket, Bin} ->
   %     ?S({Bin, size(Bin)})
@@ -135,18 +135,18 @@ client_loop(Socket) ->
       case ets:lookup(http_cache, URL) of
         [] ->
           ?S({mist,Method,URL}),
-          microtcp:send(Socket, ["HTTP/1.1 404 NotFound\r\nConnection: ", keepalive(Keepalive), "\r\nContent-Length:0\r\n\r\n"]);
+          gen_http:send(Socket, ["HTTP/1.1 404 NotFound\r\nConnection: ", keepalive(Keepalive), "\r\nContent-Length:0\r\n\r\n"]);
         [{URL, R}] when Keepalive == keepalive ->
           % ?S({chit,Method,URL}),
           % reply(Socket, R, Keepalive)
-          microtcp:send(Socket, R);
+          gen_http:send(Socket, R);
         [{URL, R}] ->
           reply(Socket, R, Keepalive)
       end,
       if 
         Method == 'POST' orelse Method == 'PUT' ->
           ?S(Req),
-          microtcp:receive_body(Socket, 1024),          
+          gen_http:receive_body(Socket, 1024),          
           Body = receive_body(Socket, []),
           ?S(Body),
           ok;
@@ -156,17 +156,17 @@ client_loop(Socket) ->
       if Keepalive == keepalive ->
         client_loop(Socket);
       true ->
-        microtcp:close(Socket),
+        gen_http:close(Socket),
         ok
       end;  
     {http_closed, Socket} ->
       ok;
     {http_error, Socket, timeout} ->
-      microtcp:close(Socket)  
+      gen_http:close(Socket)  
   end.
 
 receive_body(Socket, Acc) ->
-  microtcp:active_once(Socket),
+  gen_http:active_once(Socket),
   receive
     {http, Socket, eof} ->
       lists:reverse(Acc);
@@ -176,7 +176,7 @@ receive_body(Socket, Acc) ->
       ?S(Else)
   end.    
   
-  % microtcp:active_once(Socket),
+  % gen_http:active_once(Socket),
   % receive
   %   {tcp, Socket, Data} ->
   %     io:format("Data from client: ~p~n", [Data]),

@@ -137,6 +137,7 @@ typedef struct {
   int headers_count;
   ErlDrvBinary *url;
   int normalize_headers;
+  int has_body;
   
   Acceptor *acceptor;
   
@@ -303,6 +304,21 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
         driver_failure_atom(d->port, "invalid_config");
         return 0;
       }
+      
+      int on = 1;
+      if(d->config.reuseaddr || 1) {
+        if(setsockopt(d->socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) == -1) {
+          return errno_reply(rbuf);
+        }
+      }
+      if(d->config.keepalive) {
+        if(setsockopt(d->socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)) == -1) {
+          return errno_reply(rbuf);
+        }
+      }
+      
+      
+      
       memcpy(&d->config, buf, sizeof(Config));
       
       bzero(&si, sizeof(si));
@@ -318,18 +334,6 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       }
       if(fcntl(d->socket, F_SETFL, flags | O_NONBLOCK) == -1) {
         return errno_reply(rbuf);
-      }
-      
-      int on = 1;
-      if(d->config.reuseaddr || 1) {
-        if(setsockopt(d->socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) == -1) {
-          return errno_reply(rbuf);
-        }
-      }
-      if(d->config.keepalive) {
-        if(setsockopt(d->socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)) == -1) {
-          return errno_reply(rbuf);
-        }
       }
       
       d->mode = LISTENER_MODE;
@@ -551,8 +555,10 @@ static int on_headers_complete(http_parser *p) {
   
   // fprintf(stderr, "S> -- (%d, %d) \r\n", i, o);
   if(p->method == HTTP_POST || p->method == HTTP_PUT) {
+    d->has_body = 1;
     return 0;
   } else {
+    d->has_body = 0;
     return 1;
   }
 }
@@ -580,13 +586,16 @@ static int skip_body(http_parser *p, const char *body, size_t len) {
 static int on_message_complete(http_parser *p) {
   HTTP *d = (HTTP *)p->data;
   
-  ErlDrvTermData reply[] = {
-    ERL_DRV_ATOM, atom_http,
-    ERL_DRV_PORT, driver_mk_port(d->port),
-    ERL_DRV_ATOM, atom_eof,
-    ERL_DRV_TUPLE, 3
-  };
-  driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  if(d->has_body) {
+    ErlDrvTermData reply[] = {
+      ERL_DRV_ATOM, atom_http,
+      ERL_DRV_PORT, driver_mk_port(d->port),
+      ERL_DRV_ATOM, atom_eof,
+      ERL_DRV_TUPLE, 3
+    };
+    driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  }
+  
   
   request_count++;
   return 0;

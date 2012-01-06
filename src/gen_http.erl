@@ -91,7 +91,7 @@ listen(Port, Options) ->
 
 
 parse_reply("ok") -> ok;
-parse_reply([0, Error]) -> {error, list_to_atom(Error)}.
+parse_reply([0|Error]) -> {error, list_to_atom(Error)}.
 
 
 controlling_process(Socket, NewOwner) when is_port(Socket), is_pid(NewOwner) ->
@@ -179,12 +179,16 @@ setopts(_Socket, _Options) ->
 
 
 send(Socket, Bin) when is_port(Socket) ->
-  port_command(Socket, Bin),
-  receive
-    {http, Socket, empty} -> ok;
-    {http_error, Socket, Error} -> {error, Error};
-    {http_closed, Socket} -> {error, closed}
-  end.
+  try port_command(Socket, Bin) of
+    true ->
+      receive
+        {http, Socket, empty} -> ok;
+        {http_error, Socket, Error} -> {error, Error};
+        {http_closed, Socket} -> {error, closed}
+      end
+  catch
+    error:Error -> {error, Error}
+  end.    
 
 
 connect(Host, Port) ->

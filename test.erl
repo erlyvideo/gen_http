@@ -177,7 +177,7 @@ client_loop(Socket) ->
       if 
         Method == 'POST' orelse Method == 'PUT' ->
           ?S(Req),
-          gen_http:receive_body(Socket, 1024),          
+          gen_http:receive_body(Socket),          
           Body = receive_body(Socket, []),
           ?S(Body),
           ok;

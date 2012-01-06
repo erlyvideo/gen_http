@@ -33,7 +33,7 @@
 
 % Server API
 -export([listen/2, listen/1, controlling_process/2, active_once/1, peername/1]).
--export([receive_body/2, skip_body/1, flush_body/1]).
+-export([receive_body/1, skip_body/1, flush_body/1]).
 -export([accept_once/1, accept/2]).
 
 % Client API
@@ -49,6 +49,7 @@
 -define(CMD_ACCEPT_ONCE, 5).
 -define(CMD_CONNECT, 6).
 -define(CMD_SKIP_BODY, 7).
+-define(CMD_SET_CHUNK_SIZE, 8).
 -define(INET_REQ_GETFD, 14).
 
 name() -> gen_http.
@@ -118,8 +119,8 @@ controlling_process(Socket, NewOwner) when is_port(Socket), is_pid(NewOwner) ->
 		end
   end.
 
-receive_body(Socket, ChunkSize) ->
-  "ok" = port_control(Socket, ?CMD_RECEIVE_BODY, <<ChunkSize:32/little>>),
+receive_body(Socket) ->
+  "ok" = port_control(Socket, ?CMD_RECEIVE_BODY, <<>>),
   ok.
 
 skip_body(Socket) ->
@@ -197,8 +198,13 @@ recv(Socket, Length, Timeout, Acc) ->
   end.
   
   
-setopts(_Socket, _Options) ->
+setopts(Socket, Options) ->
+  [setopt(Socket, K, V) || {K,V} <- Options],
   ok.
+
+setopt(Socket, chunk_size, Size) when is_integer(Size) andalso Size > 0 ->
+  "ok" = port_control(Socket, ?CMD_SET_CHUNK_SIZE, <<Size:32/little>>).
+
 
 
 send(Socket, Bin) when is_port(Socket) ->

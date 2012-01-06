@@ -224,7 +224,7 @@ connect(Host, Port) ->
   connect(Host, Port, []).
   
 connect(Host, Port, Options) ->
-  connect(Host, Port, Options, 10000).
+  connect(Host, Port, Options, proplists:get_value(timeout, Options, 10000)).
   
 connect(Host, Port, _Options, Timeout) ->
   case lookup_ip(Host) of

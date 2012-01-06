@@ -18,13 +18,15 @@
 #include "http_hash.h"
 
 
-typedef enum {LISTENER_MODE, CLIENT_MODE} SocketMode;
+typedef enum {LISTENER_MODE, HANDLER_MODE, REQUEST_MODE} SocketMode;
+typedef enum {READY_STATE, CONNECTING_STATE} SocketState;
 
 static ErlDrvTermData atom_http;
 static ErlDrvTermData atom_keepalive;
 static ErlDrvTermData atom_close;
 static ErlDrvTermData atom_eof;
 static ErlDrvTermData atom_empty;
+static ErlDrvTermData atom_connected;
 static ErlDrvTermData method_atoms[HTTP_PATCH+1];
 
 
@@ -96,6 +98,8 @@ enum {
     CMD_RECEIVE_BODY = 3,
     CMD_STATS = 4,
     CMD_ACCEPT_ONCE = 5,
+    CMD_CONNECT = 6,
+    CMD_SKIP_BODY = 7,
     INET_REQ_GETFD = 14,
     INET_REQ_IGNOREFD = 28
     };
@@ -108,7 +112,13 @@ typedef struct {
   uint8_t keepalive;
   uint16_t timeout;
 } Config;
-#pragma options align=reset
+// #pragma options align=reset
+
+#pragma pack(1)
+typedef struct {
+  uint32_t ip;
+  uint16_t port;
+} RequestConfig;
 
 typedef struct {
   ErlDrvBinary *field;
@@ -130,6 +140,7 @@ typedef struct {
   int socket;
   unsigned long timeout;
   SocketMode mode;
+  SocketState state;
   http_parser_settings settings;
   http_parser *parser;
   ErlDrvBinary* buffer;
@@ -147,6 +158,16 @@ typedef struct {
 static void read_http(HTTP *d);
 static int receive_body(http_parser *p, const char *data, size_t len);
 static int skip_body(http_parser *p, const char *data, size_t len);
+static int on_message_begin(http_parser *p);
+static int on_url(http_parser *p, const char *url, size_t len);
+static void normalize_header(ErlDrvBinary *bin);
+static int on_header_field(http_parser *p, const char *field, size_t len);
+static int on_header_value(http_parser *p, const char *field, size_t len);
+static int on_headers_complete(http_parser *p);
+static int on_message_complete(http_parser *p);
+static void accept_connection(HTTP *d);
+
+
 
 static int gen_http_init(void) {
   atom_http = driver_mk_atom("http");
@@ -154,6 +175,7 @@ static int gen_http_init(void) {
   atom_close = driver_mk_atom("close");
   atom_eof = driver_mk_atom("eof");
   atom_empty = driver_mk_atom("empty");
+  atom_connected = driver_mk_atom("connected");
   int i;
   for(i = 0; i <= HTTP_PATCH; i++) {
     method_atoms[i] = driver_mk_atom((char *)http_method_str(i));
@@ -182,7 +204,7 @@ static ErlDrvData gen_http_drv_start(ErlDrvPort port, char *buff)
 static void gen_http_drv_stop(ErlDrvData handle)
 {
   HTTP* d = (HTTP *)handle;
-  if(d->mode == CLIENT_MODE) {
+  if(d->mode == HANDLER_MODE || d->mode == REQUEST_MODE && d->parser) {
     driver_free(d->parser);
     driver_free_binary(d->buffer);
   }
@@ -237,6 +259,13 @@ static void gen_http_drv_outputv(ErlDrvData handle, ErlIOVec *ev)
 static void gen_http_drv_output(ErlDrvData handle, ErlDrvEvent event)
 {
   HTTP* d = (HTTP*) handle;
+  
+  if(d->mode == REQUEST_MODE && d->state == CONNECTING_STATE) {
+    accept_connection(d);
+    return;
+  }
+  
+  
   SysIOVec* vec;
   int vlen = 0;
   size_t written;
@@ -274,20 +303,33 @@ static void gen_http_drv_output(ErlDrvData handle, ErlDrvEvent event)
   }
 }
 
+static void activate_write(HTTP *d) {
+  driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_WRITE, 1);
+}
+
+static void deactivate_write(HTTP *d) {
+  driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_WRITE, 0);
+}
+
 static void activate_read(HTTP *d) {
-  driver_select(d->port, (ErlDrvEvent)d->socket, DO_READ, 1);
+  driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_READ, 1);
 }
 
 static void deactivate_read(HTTP *d) {
-  driver_select(d->port, (ErlDrvEvent)d->socket, DO_READ, 0);
+  driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_READ, 0);
+}
+
+static int error_reply(char **rbuf, char *err) {
+  char *s = *rbuf;
+  *s = 0;
+  int len = strlen(err);
+  memcpy(s+1, err, len);
+  return len+1;
+  
 }
 
 static int errno_reply(char **rbuf) {
-  char *s = *rbuf;
-  *s = 0;
-  char *err = erl_errno_id(errno);
-  memcpy(s+1, err, strlen(err));
-  return strlen(err)+1;
+  return error_reply(rbuf, erl_errno_id(errno));
 }
 
 static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command, char *buf, 
@@ -300,6 +342,10 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       struct sockaddr_in si;
       
       d->socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      if(d->socket == -1) {
+        return errno_reply(rbuf);
+      }
+      
       if(len != sizeof(Config)) {
         driver_failure_atom(d->port, "invalid_config");
         return 0;
@@ -346,8 +392,7 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
     
     case CMD_ACTIVE_ONCE: {
       if(d->mode == LISTENER_MODE) {
-        memcpy(*rbuf, "error", 5);
-        return 5;
+        return error_reply(rbuf, "listener_mode");
       }
       
       activate_read(d);
@@ -358,10 +403,18 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
     
     case CMD_RECEIVE_BODY: {
       if(d->mode == LISTENER_MODE) {
-        memcpy(*rbuf, "error", 5);
-        return 5;
+        return error_reply(rbuf, "listener_mode");
       }
       d->settings.on_body = receive_body;
+      memcpy(*rbuf, "ok", 2);
+      return 2;
+    }
+
+    case CMD_SKIP_BODY: {
+      if(d->mode == LISTENER_MODE) {
+        return error_reply(rbuf, "listener_mode");
+      }
+      d->settings.on_body = skip_body;
       memcpy(*rbuf, "ok", 2);
       return 2;
     }
@@ -374,8 +427,7 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
     
     case CMD_ACCEPT_ONCE: {
       if(d->mode != LISTENER_MODE) {
-        memcpy(*rbuf, "error", 5);
-        return 5;
+        return error_reply(rbuf, "non_listener_mode");
       }
 
       Acceptor *acceptor = driver_alloc(sizeof(Acceptor));
@@ -384,12 +436,65 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       
 	    if (driver_monitor_process(d->port, acceptor->pid ,&acceptor->monitor) != 0) {
         driver_free(acceptor);
-        memcpy(*rbuf, "error", 5);
-        return 5;
+        return error_reply(rbuf, "noproc");
   	  }
       activate_read(d);
       d->acceptor = acceptor;
       
+      memcpy(*rbuf, "ok", 2);
+      return 2;
+    }
+    
+    case CMD_CONNECT: {
+      d->mode = REQUEST_MODE;
+      
+      if(len != sizeof(RequestConfig)) {
+        return error_reply(rbuf, "invalid_config");
+      }
+      
+      RequestConfig *config = (RequestConfig *)buf;
+      d->socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      if(d->socket == -1) {
+        return errno_reply(rbuf);
+      }
+      struct sockaddr_in si;
+      si.sin_family = AF_INET;
+      si.sin_addr.s_addr = config->ip;
+      si.sin_port = config->port;
+      
+      int flags;
+      flags = fcntl(d->socket, F_GETFL);
+      if(flags == -1) {
+        return errno_reply(rbuf);
+      }
+      if(fcntl(d->socket, F_SETFL, flags | O_NONBLOCK) == -1) {
+        return errno_reply(rbuf);
+      }
+      
+      if(connect(d->socket, (struct sockaddr *)&si, sizeof(struct sockaddr_in)) == -1) {
+        if(errno != EINPROGRESS) {
+          return errno_reply(rbuf);
+        }
+        d->state = CONNECTING_STATE;
+      } else {
+        accept_connection(d);
+      }
+      
+      d->parser = driver_alloc(sizeof(http_parser));
+      bzero(d->parser, sizeof(http_parser));
+      d->parser->data = d;
+      d->settings.on_message_begin = on_message_begin;
+      d->settings.on_url = on_url;
+      d->settings.on_header_field = on_header_field;
+      d->settings.on_header_value = on_header_value;
+      d->settings.on_headers_complete = on_headers_complete;
+      d->settings.on_body = receive_body;
+      d->settings.on_message_complete = on_message_complete;
+      d->normalize_headers = 1;
+      http_parser_init(d->parser, HTTP_RESPONSE);
+      d->buffer = driver_alloc_binary(10240);
+      
+      activate_write(d);
       memcpy(*rbuf, "ok", 2);
       return 2;
     }
@@ -406,7 +511,11 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       **rbuf = 1;
       return 1;
     }
-
+    
+    
+    default: {
+      return error_reply(rbuf, "unknown_command");
+    }
   }
   return 0;
 }
@@ -416,6 +525,7 @@ static int on_message_begin(http_parser *p) {
   HTTP *d = (HTTP *)p->data;
   d->url = NULL;
   d->headers_count = 0;
+  d->settings.on_body = receive_body;
   return 0;
 }
 
@@ -483,24 +593,32 @@ static int on_headers_complete(http_parser *p) {
   
   deactivate_read(d);
 
-  int count = 2 + 2 + 2 + 2 + 4 + 6 + d->headers_count*(4*2 + 2) + 3 + 2;
+  int count = 50 + d->headers_count*10;
   ErlDrvTermData reply[count];
   
   int i = 0;
   
   // fprintf(stderr, "S> %s %.*s HTTP/%d.%d %d\r\n", http_method_str(p->method), (int)d->url->orig_size, d->url->orig_bytes, p->http_major, p->http_minor, http_should_keep_alive(p));
   
+  // {http, Socket, Method, URL, Keepalive, Version, Headers} for server side
+  // {http, Socket, Status, Keepalive, Version, Headers} for client side
   
   reply[i++] = ERL_DRV_ATOM;
   reply[i++] = atom_http;
   reply[i++] = ERL_DRV_PORT;
   reply[i++] = driver_mk_port(d->port);
-  reply[i++] = ERL_DRV_ATOM;
-  reply[i++] = method_atoms[p->method];
-  reply[i++] = ERL_DRV_BINARY;
-  reply[i++] = (ErlDrvTermData)d->url;
-  reply[i++] = (ErlDrvTermData)d->url->orig_size;
-  reply[i++] = 0;
+  
+  if(d->mode == HANDLER_MODE) {
+    reply[i++] = ERL_DRV_ATOM;
+    reply[i++] = method_atoms[p->method];
+    reply[i++] = ERL_DRV_BINARY;
+    reply[i++] = (ErlDrvTermData)d->url;
+    reply[i++] = (ErlDrvTermData)d->url->orig_size;
+    reply[i++] = 0;
+  } else if(d->mode == REQUEST_MODE) {
+    reply[i++] = ERL_DRV_UINT;
+    reply[i++] = (ErlDrvTermData)p->status_code;
+  }
   
   reply[i++] = ERL_DRV_ATOM;
   reply[i++] = http_should_keep_alive(p) ? atom_keepalive : atom_close;
@@ -545,7 +663,7 @@ static int on_headers_complete(http_parser *p) {
   reply[i++] = j+1;
   
   reply[i++] = ERL_DRV_TUPLE;
-  reply[i++] = 7;
+  reply[i++] = d->mode == HANDLER_MODE ? 7 : d->mode == REQUEST_MODE ? 6 : -1;
   
   driver_output_term(d->port, reply, i);
   // driver_free(reply);
@@ -554,13 +672,20 @@ static int on_headers_complete(http_parser *p) {
   // int o = driver_output_term(d->port, reply, 12);
   
   // fprintf(stderr, "S> -- (%d, %d) \r\n", i, o);
-  if(p->method == HTTP_POST || p->method == HTTP_PUT) {
+  if(d->mode == HANDLER_MODE) {
+    d->has_body = 0;
+  } else {
+    d->has_body = 1;
+  }
+  if(d->mode == HANDLER_MODE && (p->method == HTTP_POST || p->method == HTTP_PUT)) {
     d->has_body = 1;
     return 0;
-  } else {
-    d->has_body = 0;
+  } 
+  if(p->method == HTTP_HEAD) {
     return 1;
   }
+  
+  return 0;
 }
 
 static int receive_body(http_parser *p, const char *body, size_t len) {
@@ -667,7 +792,7 @@ static void accept_tcp(HTTP *d)
 
   c->owner_pid = owner;
   c->socket = fd;
-  c->mode = CLIENT_MODE;
+  c->mode = HANDLER_MODE;
 
   ErlDrvPort client = driver_create_port(d->port, owner, "gen_http_drv", (ErlDrvData)c);
   c->port = client;
@@ -701,15 +826,38 @@ static void gen_http_drv_input(ErlDrvData handle, ErlDrvEvent event)
 {
   HTTP* d = (HTTP*) handle;
   
+  
   if(d->mode == LISTENER_MODE) {
     accept_tcp(d);
     return;
   }
   
-  if(d->mode == CLIENT_MODE) {
+  if(d->mode == HANDLER_MODE) {
     read_http(d);
     return;
   }
+  
+  if(d->mode == REQUEST_MODE) {
+    if(d->state == CONNECTING_STATE) {
+      accept_connection(d);
+    } else {
+      read_http(d);
+    }
+  }
+}
+
+
+static void accept_connection(HTTP *d) {
+  ErlDrvTermData reply[] = {
+    ERL_DRV_ATOM, atom_http,
+    ERL_DRV_PORT, driver_mk_port(d->port),
+    ERL_DRV_ATOM, atom_connected,
+    ERL_DRV_TUPLE, 3
+  };
+  int i = driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  d->state = READY_STATE;
+  deactivate_read(d);
+  deactivate_write(d);
 }
 
 
@@ -745,8 +893,9 @@ static void read_http(HTTP *d) {
     if(d->parser->pause_on_body) {
       // fprintf(stderr, "Stopped parsing because body met: %d(%d): %.*s\r\n", (int)n, d->parser->state, (int)n, d->buffer->orig_bytes);
     } else {
-      // fprintf(stderr, "Read(%d): %.*s\r\n", (int)n, (int)n, d->buffer->orig_bytes);
       fprintf(stderr, "Handle HTTP error: %s(%s)\n", http_errno_name(d->parser->http_errno), http_errno_description(d->parser->http_errno));
+      // fprintf(stderr, "Read(%d): '%.*s'\r\n------------\r\n", (int)n, (int)n, d->buffer->orig_bytes);
+      fflush(stderr),
       tcp_exit(d);
       return;
     }

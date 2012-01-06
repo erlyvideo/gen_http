@@ -51,5 +51,5 @@ ErlDrvTermData gen_http_hash_lookup(const char* key, int len, http_entry_t** has
           return ap->value;
       ap = ap->next;
   }
-  return NULL;
+  return driver_term_nil;
 }

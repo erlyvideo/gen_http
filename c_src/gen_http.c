@@ -1,183 +1,14 @@
-#include <erl_driver.h>
-#include <stdio.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <errno.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <fcntl.h>
-#include <assert.h>
-#include <sys/uio.h>
-#include <http_parser.h>
+#include "gen_http.h"
 
-#ifndef IOV_MAX
-#define IOV_MAX 1000
-#endif
-
-#include "http_hash.h"
-
-#define DEFAULT_CHUNK_SIZE 65536
-
-typedef enum {LISTENER_MODE, HANDLER_MODE, REQUEST_MODE} SocketMode;
-typedef enum {READY_STATE, CONNECTING_STATE} SocketState;
-
-static ErlDrvTermData atom_http;
-static ErlDrvTermData atom_keepalive;
-static ErlDrvTermData atom_close;
-static ErlDrvTermData atom_eof;
-static ErlDrvTermData atom_empty;
-static ErlDrvTermData atom_connected;
-static ErlDrvTermData method_atoms[HTTP_PATCH+1];
+ErlDrvTermData atom_http;
+ErlDrvTermData atom_keepalive;
+ErlDrvTermData atom_close;
+ErlDrvTermData atom_eof;
+ErlDrvTermData atom_empty;
+ErlDrvTermData atom_connected;
+ErlDrvTermData method_atoms[HTTP_PATCH+1];
 
 
-static const char* http_hdr_strings[] = {
-    "Cache-Control",
-    "Connection",
-    "Date",
-    "Pragma",
-    "Transfer-Encoding",
-    "Upgrade",
-    "Via",
-    "Accept",
-    "Accept-Charset",
-    "Accept-Encoding",
-    "Accept-Language",
-    "Authorization",
-    "From",
-    "Host",
-    "If-Modified-Since",
-    "If-Match",
-    "If-None-Match",
-    "If-Range",
-    "If-Unmodified-Since",
-    "Max-Forwards",
-    "Proxy-Authorization",
-    "Range",
-    "Referer",
-    "User-Agent",
-    "Age",
-    "Location",
-    "Proxy-Authenticate",
-    "Public",
-    "Retry-After",
-    "Server",
-    "Vary",
-    "Warning",
-    "Www-Authenticate",
-    "Allow",
-    "Content-Base",
-    "Content-Encoding",
-    "Content-Language",
-    "Content-Length",
-    "Content-Location",
-    "Content-Md5",
-    "Content-Range",
-    "Content-Type",
-    "Etag",
-    "Expires",
-    "Last-Modified",
-    "Accept-Ranges",
-    "Set-Cookie",
-    "Set-Cookie2",
-    "X-Forwarded-For",
-    "Cookie",
-    "Keep-Alive",
-    "Proxy-Connection",
-    NULL
-};
-
-#define HTTP_HDR_HASH_SIZE 53
-static http_entry_t* http_hdr_hash[HTTP_HDR_HASH_SIZE];
-
-
-static int request_count = 0;
-
-
-enum {
-    CMD_LISTEN = 1,
-    CMD_ACTIVE_ONCE = 2,
-    CMD_RECEIVE_BODY = 3,
-    CMD_STATS = 4,
-    CMD_ACCEPT_ONCE = 5,
-    CMD_CONNECT = 6,
-    CMD_SKIP_BODY = 7,
-    CMD_SET_CHUNK_SIZE = 8,
-    INET_REQ_GETFD = 14,
-    INET_REQ_IGNOREFD = 28
-    };
-
-#pragma pack(1)
-typedef struct {
-  uint16_t port;
-  uint16_t backlog;
-  uint8_t reuseaddr;
-  uint8_t keepalive;
-  uint16_t timeout;
-} Config;
-// #pragma options align=reset
-
-#pragma pack(1)
-typedef struct {
-  uint32_t ip;
-  uint16_t port;
-} RequestConfig;
-
-typedef struct {
-  ErlDrvBinary *field;
-  ErlDrvBinary *value;
-} Header;
-
-struct Acceptor;
-typedef struct Acceptor {
-  ErlDrvTermData pid;
-  ErlDrvMonitor monitor;
-  struct Acceptor *next;
-} Acceptor;
-
-#define HTTP_MAX_HEADERS 100
-
-typedef struct {
-  ErlDrvPort port;
-  ErlDrvTermData owner_pid;
-  int socket;
-  unsigned long timeout;
-  SocketMode mode;
-  SocketState state;
-  http_parser_settings settings;
-  http_parser *parser;
-  ErlDrvBinary* buffer;
-  Header headers[HTTP_MAX_HEADERS];
-  int headers_count;
-  ErlDrvBinary *url;
-  ErlDrvBinary *body;
-  int normalize_headers;
-  int has_body;
-  
-  Acceptor *acceptor;
-  uint32_t chunk_size;
-  size_t body_offset;
-  
-  Config config; // Only for listener mode
-} HTTP;
-
-static void read_http(HTTP *d);
-static int receive_body(http_parser *p, const char *data, size_t len);
-static int skip_body(http_parser *p, const char *data, size_t len);
-static int on_message_begin(http_parser *p);
-static int on_url(http_parser *p, const char *url, size_t len);
-static void normalize_header(ErlDrvBinary *bin);
-static int on_header_field(http_parser *p, const char *field, size_t len);
-static int on_header_value(http_parser *p, const char *field, size_t len);
-static int on_headers_complete(http_parser *p);
-static int on_message_complete(http_parser *p);
-static void accept_connection(HTTP *d);
-
-
-static void activate_write(HTTP *d);
-static void deactivate_write(HTTP *d);
-static void activate_read(HTTP *d);
-static void deactivate_read(HTTP *d);
 
 
 
@@ -192,12 +23,9 @@ static int gen_http_init(void) {
   for(i = 0; i <= HTTP_PATCH; i++) {
     method_atoms[i] = driver_mk_atom((char *)http_method_str(i));
   }
-  
-  for(i = 0; http_hdr_strings[i]; i++) {
-    ErlDrvBinary *header = driver_alloc_binary(strlen(http_hdr_strings[i]));
-    memcpy(header->orig_bytes, http_hdr_strings[i], strlen(http_hdr_strings[i]));
-    gen_http_hash_insert(header, driver_mk_atom((char *)http_hdr_strings[i]), http_hdr_hash, HTTP_HDR_HASH_SIZE);
-  }
+
+  init_http_handling();
+  init_cache();
   return 0;
 }
 
@@ -267,7 +95,7 @@ static void tcp_exit(HTTP *d)
   driver_exit(d->port, 0);
 }
 
-static void gen_http_drv_outputv(ErlDrvData handle, ErlIOVec *ev)
+static void gen_http_drv_schedule_write(ErlDrvData handle, ErlIOVec *ev)
 {
   HTTP* d = (HTTP *)handle;
   driver_enqv(d->port, ev, 0);
@@ -277,7 +105,7 @@ static void gen_http_drv_outputv(ErlDrvData handle, ErlIOVec *ev)
 
 
 
-static void gen_http_drv_output(ErlDrvData handle, ErlDrvEvent event)
+static void gen_http_drv_ready_output(ErlDrvData handle, ErlDrvEvent event)
 {
   HTTP* d = (HTTP*) handle;
   
@@ -324,55 +152,20 @@ static void gen_http_drv_output(ErlDrvData handle, ErlDrvEvent event)
   }
 }
 
-static ErlDrvBinary *cached_reply_bin = 0;
 
-static int cached_reply(HTTP *d) {
-  return 0;
-  
-  // This is just a temporary stub code to test in-driver cache
-  
-  if(memcmp(d->url->orig_bytes, "/dvb/2/manifest.f4m", d->url->orig_size)) {
-    return 0;
-  }
-  
-  if(!cached_reply_bin) {
-    // char reply[] = "Hello world\n";
-    char reply[] = "0123456789A\n";
-    int len = 12; // strlen(reply)
-    int count = 1000;
-    count = 1;
-    char headers[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: keep-alive\r\nContent-Length: 12\r\n\r\n";
-    ErlDrvBinary *bin = driver_alloc_binary(len*count+sizeof(headers));
-    int i;
-    char *ptr = bin->orig_bytes;
-    memcpy(ptr, headers, sizeof(headers) - 1);
-    ptr += sizeof(headers) - 1;
-    for(i = 0; i < count; i++) {
-      memcpy(ptr, reply, len);
-      ptr += len;
-    }
-    cached_reply_bin = bin;
-  }
-  
-  driver_enq_bin(d->port, cached_reply_bin, 0, cached_reply_bin->orig_size);
-  activate_write(d);
-  
-  return 1;
-}
-
-static void activate_write(HTTP *d) {
+void activate_write(HTTP *d) {
   driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_WRITE, 1);
 }
 
-static void deactivate_write(HTTP *d) {
+void deactivate_write(HTTP *d) {
   driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_WRITE, 0);
 }
 
-static void activate_read(HTTP *d) {
+void activate_read(HTTP *d) {
   driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_READ, 1);
 }
 
-static void deactivate_read(HTTP *d) {
+void deactivate_read(HTTP *d) {
   driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_READ, 0);
 }
 
@@ -485,12 +278,6 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       return 2;
     }
     
-    case CMD_STATS: {
-      int count = htonl(request_count);
-      memcpy(*rbuf, &count, 4);
-      return 4;
-    }
-    
     case CMD_ACCEPT_ONCE: {
       if(d->mode != LISTENER_MODE) {
         return error_reply(rbuf, "non_listener_mode");
@@ -585,252 +372,6 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       return error_reply(rbuf, "unknown_command");
     }
   }
-  return 0;
-}
-
-static int on_message_begin(http_parser *p) {
-  // fprintf(stderr, "S> INCOME REQUEST\r\n");
-  HTTP *d = (HTTP *)p->data;
-  d->url = NULL;
-  d->headers_count = 0;
-  d->settings.on_body = receive_body;
-  return 0;
-}
-
-static int on_url(http_parser *p, const char *url, size_t len) {
-  // TODO: here should be special accelerated cache replier
-  HTTP *d = (HTTP *)p->data;
-  d->url = driver_alloc_binary(len);
-  activate_read(d);
-  memcpy(d->url->orig_bytes, url, len);
-  return 0;
-}
-
-#define IS_ALPHA(c)         (LOWER(c) >= 'a' && LOWER(c) <= 'z')
-#define IS_NUM(c)           ((c) >= '0' && (c) <= '9')
-#define LOWER(c)            (unsigned char)(c | 0x20)
-#define UPPER(c)            (unsigned char)(c & (0xFF ^ 0x20))
-#define IS_ALPHANUM(c)      (IS_ALPHA(c) || IS_NUM(c))
-
-static void normalize_header(ErlDrvBinary *bin) {
-  int i;
-  char uppering = 1;
-  char c;
-
-  for(i = 0; i < bin->orig_size; i++) {
-    c = bin->orig_bytes[i];
-    if(IS_ALPHA(c)) {
-      if(uppering) bin->orig_bytes[i] = UPPER(c);
-      else         bin->orig_bytes[i] = LOWER(c);
-      uppering = 0;
-    } else {
-      uppering = 1;
-    }
-  }
-}
-
-static int on_header_field(http_parser *p, const char *field, size_t len) {
-  HTTP *d = (HTTP *)p->data;
-  activate_read(d);
-  if(d->headers_count >= HTTP_MAX_HEADERS) {
-    p->http_errno = HPE_HEADER_OVERFLOW;
-    return 1;
-  }
-  
-  ErlDrvBinary *bin = d->headers[d->headers_count].field = driver_alloc_binary(len);
-  memcpy(bin->orig_bytes, field, len);
-  
-  if(d->normalize_headers) normalize_header(bin);
-  
-  return 0;
-}
-
-static int on_header_value(http_parser *p, const char *field, size_t len) {
-  HTTP *d = (HTTP *)p->data;
-  activate_read(d);
-
-  ErlDrvBinary *bin = d->headers[d->headers_count].value = driver_alloc_binary(len);
-  memcpy(bin->orig_bytes, field, len);
-  
-  d->headers_count++;
-  
-  return 0;
-}
-
-static int on_headers_complete(http_parser *p) {
-  HTTP *d = (HTTP *)p->data;
-  
-  if(d->mode == HANDLER_MODE && cached_reply(d)) {
-    d->has_body = (p->method == HTTP_POST || p->method == HTTP_PUT);
-    return p->method == HTTP_HEAD ? 1 : 0;
-  }
-  
-  deactivate_read(d);
-
-  int count = 50 + d->headers_count*10;
-  ErlDrvTermData reply[count];
-  
-  int i = 0;
-  
-  // fprintf(stderr, "S> %s %.*s HTTP/%d.%d %d\r\n", http_method_str(p->method), (int)d->url->orig_size, d->url->orig_bytes, p->http_major, p->http_minor, http_should_keep_alive(p));
-  
-  // {http, Socket, Method, URL, Keepalive, Version, Headers} for server side
-  // {http, Socket, Status, Keepalive, Version, Headers} for client side
-  
-  reply[i++] = ERL_DRV_ATOM;
-  reply[i++] = atom_http;
-  reply[i++] = ERL_DRV_PORT;
-  reply[i++] = driver_mk_port(d->port);
-  
-  if(d->mode == HANDLER_MODE) {
-    reply[i++] = ERL_DRV_ATOM;
-    reply[i++] = method_atoms[p->method];
-    reply[i++] = ERL_DRV_BINARY;
-    reply[i++] = (ErlDrvTermData)d->url;
-    reply[i++] = (ErlDrvTermData)d->url->orig_size;
-    reply[i++] = 0;
-  } else if(d->mode == REQUEST_MODE) {
-    reply[i++] = ERL_DRV_UINT;
-    reply[i++] = (ErlDrvTermData)p->status_code;
-  }
-  
-  reply[i++] = ERL_DRV_ATOM;
-  reply[i++] = http_should_keep_alive(p) ? atom_keepalive : atom_close;
-  
-  reply[i++] = ERL_DRV_UINT;
-  reply[i++] = (ErlDrvTermData)p->http_major;
-  reply[i++] = ERL_DRV_UINT;
-  reply[i++] = (ErlDrvTermData)p->http_minor;
-  reply[i++] = ERL_DRV_TUPLE;
-  reply[i++] = 2;
-  
-  
-  int j;
-  
-  for(j = 0; j < d->headers_count; j++) {
-    ErlDrvTermData atom = gen_http_hash_lookup(d->headers[j].field->orig_bytes, d->headers[j].field->orig_size, http_hdr_hash, HTTP_HDR_HASH_SIZE);
-    
-    if(atom) {
-      reply[i++] = ERL_DRV_ATOM;
-      reply[i++] = atom;
-    } else {
-      reply[i++] = ERL_DRV_BINARY;
-      reply[i++] = (ErlDrvTermData)d->headers[j].field;
-      reply[i++] = (ErlDrvTermData)d->headers[j].field->orig_size;
-      reply[i++] = 0;
-    }
-
-    reply[i++] = ERL_DRV_BINARY;
-    reply[i++] = (ErlDrvTermData)d->headers[j].value;
-    reply[i++] = (ErlDrvTermData)d->headers[j].value->orig_size;
-    reply[i++] = 0;
-    
-    reply[i++] = ERL_DRV_TUPLE;
-    reply[i++] = 2;
-
-    // fprintf(stderr, "S> %.*s: %.*s\r\n", (int)d->headers[j].field->orig_size, d->headers[j].field->orig_bytes, (int)d->headers[j].value->orig_size, d->headers[j].value->orig_bytes);
-  }
-  
-  reply[i++] = ERL_DRV_NIL;
-  reply[i++] = ERL_DRV_LIST;
-  reply[i++] = j+1;
-  
-  reply[i++] = ERL_DRV_TUPLE;
-  reply[i++] = d->mode == HANDLER_MODE ? 7 : d->mode == REQUEST_MODE ? 6 : -1;
-  
-  driver_output_term(d->port, reply, i);
-  if(d->url) {
-    driver_free_binary(d->url);
-    d->url = NULL;
-  }
-  for(j = 0; j < d->headers_count; j++) {
-    driver_free_binary(d->headers[j].field);
-    d->headers[j].field = NULL;
-
-    driver_free_binary(d->headers[j].value);
-    d->headers[j].value = NULL;
-  }
-  // driver_free(reply);
-  // reply[10] = ERL_DRV_TUPLE;
-  // reply[11] = 4;
-  // int o = driver_output_term(d->port, reply, 12);
-  
-  // fprintf(stderr, "S> -- (%d, %d) \r\n", i, o);
-  if(d->mode == HANDLER_MODE) {
-    d->has_body = 0;
-  } else {
-    d->has_body = 1;
-  }
-  if(d->mode == HANDLER_MODE && (p->method == HTTP_POST || p->method == HTTP_PUT)) {
-    d->has_body = 1;
-    return 0;
-  } 
-  if(p->method == HTTP_HEAD) {
-    return 1;
-  }
-  
-  return 0;
-}
-
-static void flush_body(HTTP *d) {
-  if(!d->body) return;
-  
-  ErlDrvTermData reply[] = {
-    ERL_DRV_ATOM, atom_http,
-    ERL_DRV_PORT, driver_mk_port(d->port),
-    ERL_DRV_BINARY, (ErlDrvTermData)d->body, (ErlDrvTermData)d->body->orig_size, (ErlDrvTermData)0, 
-    ERL_DRV_TUPLE, 3
-  };
-  driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
-  driver_free_binary(d->body);
-  d->body = NULL;
-  d->body_offset = 0;  
-}
-
-static int receive_body(http_parser *p, const char *body, size_t len) {
-  HTTP *d = (HTTP *)p->data;
-  if(!d->body) {
-    d->body = driver_alloc_binary(len > d->chunk_size ? len : d->chunk_size);
-    d->body_offset = 0;
-  }
-  if(d->body->orig_size - d->body_offset < len) {
-    d->body = driver_realloc_binary(d->body, d->body_offset + len);
-  }
-  
-  memcpy(d->body->orig_bytes + d->body_offset, body, len);
-  d->body_offset += len;
-  
-  if(d->body_offset >= d->chunk_size) {
-    flush_body(d);
-  }
-  
-  return 0;
-}
-
-static int skip_body(http_parser *p, const char *body, size_t len) {
-  HTTP *d = (HTTP *)p->data;
-  // fprintf(stderr, "S> skip_body_chunk(%d): %.*s\r\n", (int)len, (int)len, body);
-  activate_read(d);
-  return 0;
-}
-
-static int on_message_complete(http_parser *p) {
-  HTTP *d = (HTTP *)p->data;
-  
-  flush_body(d);
-  
-  if(d->has_body) {
-    ErlDrvTermData reply[] = {
-      ERL_DRV_ATOM, atom_http,
-      ERL_DRV_PORT, driver_mk_port(d->port),
-      ERL_DRV_ATOM, atom_eof,
-      ERL_DRV_TUPLE, 3
-    };
-    driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
-  }
-  
-  
-  request_count++;
   return 0;
 }
 
@@ -957,7 +498,7 @@ static void gen_http_drv_input(ErlDrvData handle, ErlDrvEvent event)
 }
 
 
-static void accept_connection(HTTP *d) {
+void accept_connection(HTTP *d) {
   ErlDrvTermData reply[] = {
     ERL_DRV_ATOM, atom_http,
     ERL_DRV_PORT, driver_mk_port(d->port),
@@ -971,7 +512,7 @@ static void accept_connection(HTTP *d) {
 }
 
 
-static void read_http(HTTP *d) {
+void read_http(HTTP *d) {
 
   ssize_t n = recv(d->socket, d->buffer->orig_bytes, d->buffer->orig_size, 0);
   
@@ -1041,13 +582,13 @@ ErlDrvEntry gen_http_driver_entry = {
     gen_http_drv_stop,		/* F_PTR stop, called when port is closed */
     NULL,	                /* F_PTR output, called when erlang has sent */
     gen_http_drv_input,		/* F_PTR ready_input, called when input descriptor ready */
-    gen_http_drv_output,	/* F_PTR ready_output, called when output descriptor ready */
+    gen_http_drv_ready_output,	/* F_PTR ready_output, called when output descriptor ready */
     "gen_http_drv",		/* char *driver_name, the argument to open_port */
     NULL,			/* F_PTR finish, called when unloaded */
     NULL,     /* void *handle */
     gen_http_drv_command,			/* F_PTR control, port_command callback */
     gen_http_inet_timeout,			/* F_PTR timeout, reserved */
-    gen_http_drv_outputv,	/* F_PTR outputv, reserved */
+    gen_http_drv_schedule_write,	/* F_PTR outputv, reserved */
     NULL,                      /* ready_async */
     NULL,                             /* flush */
     NULL,                             /* call */

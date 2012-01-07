@@ -143,7 +143,7 @@ void gh_cache_get(HTTP *d, char *url) {
     ErlDrvTermData reply[] = {
       ERL_DRV_ATOM, driver_mk_atom("http_cache"),
       ERL_DRV_PORT, driver_mk_port(d->port),
-      ERL_DRV_BINARY, (ErlDrvTermData)bin, (ErlDrvTermData)0, (ErlDrvTermData)bin->orig_size,
+      ERL_DRV_BINARY, (ErlDrvTermData)bin, (ErlDrvTermData)bin->orig_size, (ErlDrvTermData)0,
       ERL_DRV_TUPLE, 3      
     };
     driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));

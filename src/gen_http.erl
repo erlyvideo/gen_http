@@ -27,6 +27,7 @@
 -author('Max Lapshin <max@maxidoors.ru>').
 -include("log.hrl").
 -include_lib("kernel/include/inet.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 % Common API
 -export([send/2, close/1, recv/2, recv/3, setopts/2]).
@@ -44,6 +45,8 @@
 
 % Cowboy transport API
 -export([name/0, messages/0]).
+
+-export([open_socket/0]).
 
 -define(CMD_LISTEN, 1).
 -define(CMD_ACTIVE_ONCE, 2).

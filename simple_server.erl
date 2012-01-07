@@ -2,19 +2,25 @@
 %%! -pa ebin  -smp enable +K true +A 16 +a 2048
 
 
+cache_reply(Socket, Url, Size) ->
+  Body = ["123456789\n" || _ <- lists:seq(1,Size div 10)],
+  gen_http:cache_set(Socket, Url, [
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: ", integer_to_list(iolist_size(Body)),"\r\n",
+    "\r\n",
+    Body
+  ]).
+  
+  
+
 main([]) ->
   main(["9000"]);
   
 main([Port]) ->
   {ok, Listen} = gen_http:listen(list_to_integer(Port), [{backlog,1000}]),
-  
-  Body = ["123456789\n" || _ <- lists:seq(1,5)],
-  gen_http:cache_set(Listen, "/dvb/2/manifest.f4m", [
-    "HTTP/1.1 200 OK\r\n",
-    "Content-Length: ", integer_to_list(iolist_size(Body)),"\r\n",
-    "\r\n",
-    Body
-  ]),
+  cache_reply(Listen, "/big", 100000),
+  cache_reply(Listen, "/medium", 1000),
+  cache_reply(Listen, "/small", 10),
   listen_loop(Listen).
 
 listen_loop(Listen) ->

@@ -94,6 +94,8 @@ typedef struct {
   int normalize_headers;
   int has_body;
   
+  int auto_reply;
+  
   Acceptor *acceptor;
   uint32_t chunk_size;
   size_t body_offset;

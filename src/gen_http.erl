@@ -274,7 +274,10 @@ lookup_ip(Host) ->
 
 
 set_cache(Socket, URL, Reply) when is_binary(URL) andalso is_binary(Reply) ->
-  "ok" = port_control(Socket, ?CMD_SET_CACHE, <<URL/binary, 0, Reply/binary>>);
+  case erlang:port_info(Socket, name) of
+    {name, "gen_http_drv"} -> "ok" = port_control(Socket, ?CMD_SET_CACHE, <<URL/binary, 0, Reply/binary>>);
+    _ -> true
+  end;  
 
 set_cache(Socket, URL, Reply) when is_list(URL) ->
   set_cache(Socket, list_to_binary(URL), Reply);
@@ -284,13 +287,22 @@ set_cache(Socket, URL, Reply) when is_list(Reply) ->
 
 
 delete_cache(Socket, URL) when is_binary(URL) ->
-  "ok" = port_control(Socket, ?CMD_DELETE_CACHE, <<URL/binary, 0>>).
+  case erlang:port_info(Socket, name) of
+    {name, "gen_http_drv"} -> "ok" = port_control(Socket, ?CMD_DELETE_CACHE, <<URL/binary, 0>>);
+    _ -> true
+  end.
 
 list_cache(Socket) ->
-  "ok" = port_control(Socket, ?CMD_LIST_CACHE, <<>>),
-  receive
-    {http_cache_list, Socket, URLS} -> {ok, URLS}
-  after
-    5000 -> {error, timeout}
-  end.    
+  case erlang:port_info(Socket, name) of
+    {name, "gen_http_drv"} ->
+      "ok" = port_control(Socket, ?CMD_LIST_CACHE, <<>>),
+      receive
+        {http_cache_list, Socket, URLS} -> {ok, URLS}
+      after
+        5000 -> {error, timeout}
+      end;
+    _ ->
+      true
+  end.
+
 

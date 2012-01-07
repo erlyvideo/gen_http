@@ -77,11 +77,14 @@ int on_message_begin(http_parser *p) {
   d->url = NULL;
   d->headers_count = 0;
   d->settings.on_body = receive_body;
+  if(d->body) {
+    fprintf(stderr, "Body: %p, %d, %.*s\r\n", d->body, (int)d->body->orig_size, (int)d->body->orig_size, d->body->orig_bytes);
+  }
+  assert(!d->body);
   return 0;
 }
 
 int on_url(http_parser *p, const char *url, size_t len) {
-  // TODO: here should be special accelerated cache replier
   HTTP *d = (HTTP *)p->data;
   d->url = driver_alloc_binary(len);
   activate_read(d);
@@ -140,11 +143,31 @@ int on_header_value(http_parser *p, const char *field, size_t len) {
   return 0;
 }
 
+static void free_headers(HTTP *d) {
+  int j;
+  assert(!d->body);
+  if(d->url) {
+    driver_free_binary(d->url);
+    d->url = NULL;
+  }
+  for(j = 0; j < d->headers_count; j++) {
+    driver_free_binary(d->headers[j].field);
+    d->headers[j].field = NULL;
+
+    driver_free_binary(d->headers[j].value);
+    d->headers[j].value = NULL;
+  }
+  d->headers_count = 0;
+}
+
 int on_headers_complete(http_parser *p) {
   HTTP *d = (HTTP *)p->data;
+
+  assert(!d->body);
   
   if(d->mode == HANDLER_MODE && cached_reply(d)) {
     d->has_body = (p->method == HTTP_POST || p->method == HTTP_PUT);
+    free_headers(d);
     return p->method == HTTP_HEAD ? 1 : 0;
   }
   
@@ -222,17 +245,7 @@ int on_headers_complete(http_parser *p) {
   reply[i++] = d->mode == HANDLER_MODE ? 7 : d->mode == REQUEST_MODE ? 6 : -1;
   
   driver_output_term(d->port, reply, i);
-  if(d->url) {
-    driver_free_binary(d->url);
-    d->url = NULL;
-  }
-  for(j = 0; j < d->headers_count; j++) {
-    driver_free_binary(d->headers[j].field);
-    d->headers[j].field = NULL;
-
-    driver_free_binary(d->headers[j].value);
-    d->headers[j].value = NULL;
-  }
+  free_headers(d);
   // driver_free(reply);
   // reply[10] = ERL_DRV_TUPLE;
   // reply[11] = 4;
@@ -292,6 +305,11 @@ int receive_body(http_parser *p, const char *body, size_t len) {
 
 int skip_body(http_parser *p, const char *body, size_t len) {
   HTTP *d = (HTTP *)p->data;
+  if(d->body) {
+    driver_free_binary(d->body);
+    d->body = NULL;
+    d->body_offset = 0;
+  }
   // fprintf(stderr, "S> skip_body_chunk(%d): %.*s\r\n", (int)len, (int)len, body);
   activate_read(d);
   return 0;
@@ -312,7 +330,7 @@ int on_message_complete(http_parser *p) {
     driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
   }
   
-  
+  assert(!d->body);
   return 0;
 }
 

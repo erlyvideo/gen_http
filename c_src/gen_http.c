@@ -35,7 +35,6 @@ static ErlDrvData gen_http_drv_start(ErlDrvPort port, char *buff)
     HTTP* d = (HTTP *)driver_alloc(sizeof(HTTP));
     bzero(d, sizeof(HTTP));
     d->port = port;
-    // set_port_control_flags(port, PORT_CONTROL_FLAG_BINARY);
     d->owner_pid = driver_caller(port);
     return (ErlDrvData)d;
 }
@@ -138,6 +137,9 @@ static void gen_http_drv_ready_output(ErlDrvData handle, ErlDrvEvent event)
     ErlDrvSizeT rest = driver_deq(d->port, written);
     
     if(rest == 0) {
+      if(d->auto_reply) {
+        d->auto_reply = 0;
+      } else {
       ErlDrvTermData reply[] = {
         ERL_DRV_ATOM, atom_http,
         ERL_DRV_PORT, driver_mk_port(d->port),
@@ -146,6 +148,7 @@ static void gen_http_drv_ready_output(ErlDrvData handle, ErlDrvEvent event)
       };
       
       driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+      }
     }
     // fprintf(stderr, "Network write: %d (%d)\r\n", (int)written, (int)rest);
     
@@ -373,7 +376,8 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       for(ptr = buf; ptr && (ptr < buf + len) && *ptr; ptr++) {
       }
       if(ptr < buf + len - 1) {
-        set_cache(d, buf, (uint8_t *)ptr+1, len - (buf - ptr) - 1);
+        // fprintf(stderr, "%d -> %d, %d\r\n", (int)len, (int)(ptr - buf), (int)(len - (ptr - buf) - 1));
+        set_cache(d, buf, (uint8_t *)ptr+1, len - (ptr - buf) - 1);
         memcpy(*rbuf, "ok", 2);
         return 2;
       } else {

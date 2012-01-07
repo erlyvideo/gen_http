@@ -7,6 +7,14 @@ main([]) ->
   
 main([Port]) ->
   {ok, Listen} = gen_http:listen(list_to_integer(Port), [{backlog,1000}]),
+  
+  Body = ["123456789\n" || _ <- lists:seq(1,5)],
+  gen_http:set_cache(Listen, "/dvb/2/manifest.f4m", [
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: ", integer_to_list(iolist_size(Body)),"\r\n",
+    "\r\n",
+    Body
+  ]),
   listen_loop(Listen).
 
 listen_loop(Listen) ->
@@ -21,6 +29,7 @@ listen_loop(Listen) ->
       Pid ! {socket, Socket},
       listen_loop(Listen);
     Else ->
+      io:format("Listener: ~p~n", [Else]),
       erlang:exit({listener,Else})
   end.
 
@@ -40,8 +49,8 @@ handler_loop(Socket) ->
       handler_loop(Socket);
     {http_closed, Socket} ->
       io:format("Handler closed~n");
-    {http, Socket, empty} ->
-      handler_loop(Socket);
+    % {http, Socket, empty} ->
+    %   handler_loop(Socket);
     Else ->
       io:format("Message: ~p~n", [Else]),
       erlang:exit({handler,Else})

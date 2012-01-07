@@ -6,7 +6,7 @@ void init_cache() {
   // char reply[] = "Hello world\n";
   char reply[] = "123456789\n";
   int len = strlen(reply);
-  int count = 1000;
+  int count = 1000*1000;
   // count = 1;
   char headers_fmt[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: keep-alive\r\nContent-Length: %d\r\n\r\n";
   char headers[1024];

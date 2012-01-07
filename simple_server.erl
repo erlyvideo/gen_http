@@ -13,6 +13,7 @@ listen_loop(Listen) ->
   gen_http:accept_once(Listen),
   receive
     {http_connection, Listen, Socket} ->
+      io:format("Accepting new connection~n"),
       Pid = spawn(fun() ->
         handle_client()
       end),

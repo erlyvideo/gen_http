@@ -39,6 +39,9 @@
 % Client API
 -export([connect/3, connect/2, lookup_ip/1]).
 
+% Cache API
+-export([set_cache/3, delete_cache/2, list_cache/1]).
+
 % Cowboy transport API
 -export([name/0, messages/0]).
 
@@ -50,6 +53,9 @@
 -define(CMD_CONNECT, 6).
 -define(CMD_SKIP_BODY, 7).
 -define(CMD_SET_CHUNK_SIZE, 8).
+-define(CMD_SET_CACHE, 9).
+-define(CMD_DELETE_CACHE, 10).
+-define(CMD_LIST_CACHE, 11).
 -define(INET_REQ_GETFD, 14).
 
 name() -> gen_http.
@@ -265,3 +271,26 @@ lookup_ip(Host) ->
           {error, Error}
       end
   end.  
+
+
+set_cache(Socket, URL, Reply) when is_binary(URL) andalso is_binary(Reply) ->
+  "ok" = port_control(Socket, ?CMD_SET_CACHE, <<URL/binary, 0, Reply/binary>>);
+
+set_cache(Socket, URL, Reply) when is_list(URL) ->
+  set_cache(Socket, list_to_binary(URL), Reply);
+
+set_cache(Socket, URL, Reply) when is_list(Reply) ->
+  set_cache(Socket, URL, iolist_to_binary(Reply)).
+
+
+delete_cache(Socket, URL) when is_binary(URL) ->
+  "ok" = port_control(Socket, ?CMD_DELETE_CACHE, <<URL/binary, 0>>).
+
+list_cache(Socket) ->
+  "ok" = port_control(Socket, ?CMD_LIST_CACHE, <<>>),
+  receive
+    {http_cache_list, Socket, URLS} -> {ok, URLS}
+  after
+    5000 -> {error, timeout}
+  end.    
+

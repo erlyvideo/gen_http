@@ -40,6 +40,9 @@ enum {
     CMD_CONNECT = 6,
     CMD_SKIP_BODY = 7,
     CMD_SET_CHUNK_SIZE = 8,
+    CMD_SET_CACHE = 9,
+    CMD_DELETE_CACHE = 10,
+    CMD_LIST_CACHE = 11,
     INET_REQ_GETFD = 14,
     INET_REQ_IGNOREFD = 28
     };
@@ -117,5 +120,9 @@ void activate_read(HTTP *d);
 void deactivate_read(HTTP *d);
 
 
-int cached_reply(HTTP *d);
 void init_cache();
+int cached_reply(HTTP *d);
+
+void set_cache(HTTP *d, char *url, uint8_t *data, size_t len);
+void delete_cache(HTTP *d, char *url);
+void list_cache(HTTP *d);

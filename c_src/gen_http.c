@@ -368,6 +368,37 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
     }
     
     
+    case CMD_SET_CACHE: {
+      char *ptr;
+      for(ptr = buf; ptr && (ptr < buf + len) && *ptr; ptr++) {
+      }
+      if(ptr < buf + len - 1) {
+        set_cache(d, buf, (uint8_t *)ptr+1, len - (buf - ptr) - 1);
+        memcpy(*rbuf, "ok", 2);
+        return 2;
+      } else {
+        return error_reply(rbuf, "badarg");
+      }
+    }
+    
+    case CMD_DELETE_CACHE: {
+      char *ptr;
+      for(ptr = buf; ptr && ptr < buf + len && *ptr; ptr++) {
+      }
+      if(ptr == buf + len) {
+        return error_reply(rbuf, "badarg");
+      }
+      delete_cache(d, buf);
+      memcpy(*rbuf, "ok", 2);
+      return 2;
+    }
+    
+    case CMD_LIST_CACHE: {
+      list_cache(d);
+      memcpy(*rbuf, "ok", 2);
+      return 2;
+    }
+    
     default: {
       return error_reply(rbuf, "unknown_command");
     }

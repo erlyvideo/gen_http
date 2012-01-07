@@ -38,3 +38,23 @@ int cached_reply(HTTP *d) {
   
   return 1;
 }
+
+void set_cache(HTTP *d, char *url, uint8_t *data, size_t len) {
+  
+}
+
+void delete_cache(HTTP *d, char *url) {
+  
+}
+
+void list_cache(HTTP *d) {
+  ErlDrvTermData reply[] = {
+    ERL_DRV_ATOM, driver_mk_atom("http_cache_list"),
+    ERL_DRV_PORT, driver_mk_port(d->port),
+    ERL_DRV_NIL,
+    ERL_DRV_LIST, 1,
+    ERL_DRV_TUPLE, 3
+  };
+  
+  driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+}

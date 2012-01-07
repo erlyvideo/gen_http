@@ -39,6 +39,9 @@ handler_loop(Socket) ->
       handler_loop(Socket);
     {http_closed, Socket} ->
       io:format("Handler closed~n");
+    {http, Socket, empty} ->
+      handler_loop(Socket);
     Else ->
+      io:format("Message: ~p~n", [Else]),
       erlang:exit({handler,Else})
   end.

@@ -8,7 +8,7 @@ KHASH_MAP_INIT_STR(gh, ErlDrvBinary *)
 
 static khash_t(gh) *cache;
 
-void init_cache() {
+void gh_cache_init() {
   cache_lock = erl_drv_rwlock_create("gen_http_cache");
   cache = kh_init(gh);
 }
@@ -46,7 +46,7 @@ int cached_reply(HTTP *d) {
   return 1;
 }
 
-void set_cache(HTTP *d, char *url0, uint8_t *data, size_t len) {
+void gh_cache_set(HTTP *d, char *url0, uint8_t *data, size_t len) {
   char *url = malloc(strlen(url0) + 1);
   strcpy(url, url0);
   ErlDrvBinary *bin = driver_alloc_binary(len);
@@ -66,20 +66,89 @@ void set_cache(HTTP *d, char *url0, uint8_t *data, size_t len) {
   erl_drv_rwlock_rwunlock(cache_lock);
 }
 
-void delete_cache(HTTP *d, char *url) {
+void gh_cache_delete(HTTP *d, char *url) {
   erl_drv_rwlock_rwlock(cache_lock);
+  
+  khiter_t k = kh_get(gh, cache, url);
+  if(k == kh_end(cache)) {
+    // fprintf(stderr, "Cache miss '%s'(%d) %d\r\n", url, kh_str_hash_func(url), kh_size(cache));
+    erl_drv_rwlock_rwunlock(cache_lock);
+    return;
+  }
+  
+  char *key = (char *)kh_key(cache, k);
+  free(key);
+  ErlDrvBinary *bin = (ErlDrvBinary *)kh_value(cache, k);
+  driver_free_binary(bin);
+  kh_del(gh, cache, k);
   
   erl_drv_rwlock_rwunlock(cache_lock);  
 }
 
-void list_cache(HTTP *d) {
-  ErlDrvTermData reply[] = {
-    ERL_DRV_ATOM, driver_mk_atom("http_cache_list"),
-    ERL_DRV_PORT, driver_mk_port(d->port),
-    ERL_DRV_NIL,
-    ERL_DRV_LIST, 1,
-    ERL_DRV_TUPLE, 3
-  };
+void gh_cache_list(HTTP *d) {
+  int count = 5 + kh_size(cache)*12;
+  int i = 0;
+  int j = 0;
+  ErlDrvTermData reply[count];
   
-  driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  reply[i++] = ERL_DRV_ATOM;
+  reply[i++] = driver_mk_atom("http_cache_list");
+  reply[i++] = ERL_DRV_PORT;
+  reply[i++] = driver_mk_port(d->port);
+ 
+  khiter_t k;
+  for(k = kh_begin(cache); k != kh_end(cache); ++k) {
+    if(kh_exist(cache, k)) {
+      j++;
+      reply[i++] = ERL_DRV_BUF2BINARY;
+      reply[i++] = (ErlDrvTermData)kh_key(cache, k);
+      reply[i++] = (ErlDrvTermData)strlen(kh_key(cache, k));
+      // reply[i++] = ERL_DRV_BINARY;
+      // ErlDrvBinary *bin = (ErlDrvBinary *)kh_val(cache, k);
+      // reply[i++] = (ErlDrvTermData)bin;
+      // reply[i++] = (ErlDrvTermData)bin->orig_size;
+      // reply[i++] = (ErlDrvTermData)0;
+    }
+  }
+  
+  reply[i++] = ERL_DRV_NIL;
+  reply[i++] = ERL_DRV_LIST;
+  reply[i++] = (ErlDrvTermData)(1 + j);
+  reply[i++] = ERL_DRV_TUPLE;
+  reply[i++] = (ErlDrvTermData)3;
+  
+  driver_output_term(d->port, reply, i);
 }
+
+
+void gh_cache_get(HTTP *d, char *url) {
+  
+  erl_drv_rwlock_rlock(cache_lock);
+  
+  khiter_t k = kh_get(gh, cache, url);
+  if(k == kh_end(cache)) {
+    erl_drv_rwlock_runlock(cache_lock);
+
+    ErlDrvTermData reply[] = {
+      ERL_DRV_ATOM, driver_mk_atom("http_cache"),
+      ERL_DRV_PORT, driver_mk_port(d->port),
+      ERL_DRV_ATOM, driver_mk_atom("undefined"),
+      ERL_DRV_TUPLE, 3
+    };
+    driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  } else {
+    ErlDrvBinary *bin = kh_value(cache, k);
+    erl_drv_rwlock_runlock(cache_lock);
+    
+    ErlDrvTermData reply[] = {
+      ERL_DRV_ATOM, driver_mk_atom("http_cache"),
+      ERL_DRV_PORT, driver_mk_port(d->port),
+      ERL_DRV_BINARY, (ErlDrvTermData)bin, (ErlDrvTermData)0, (ErlDrvTermData)bin->orig_size,
+      ERL_DRV_TUPLE, 3      
+    };
+    driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  }
+  
+  
+}
+

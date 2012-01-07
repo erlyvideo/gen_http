@@ -25,7 +25,7 @@ static int gen_http_init(void) {
   }
 
   init_http_handling();
-  init_cache();
+  gh_cache_init();
   return 0;
 }
 
@@ -377,12 +377,24 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       }
       if(ptr < buf + len - 1) {
         // fprintf(stderr, "%d -> %d, %d\r\n", (int)len, (int)(ptr - buf), (int)(len - (ptr - buf) - 1));
-        set_cache(d, buf, (uint8_t *)ptr+1, len - (ptr - buf) - 1);
+        gh_cache_set(d, buf, (uint8_t *)ptr+1, len - (ptr - buf) - 1);
         memcpy(*rbuf, "ok", 2);
         return 2;
       } else {
         return error_reply(rbuf, "badarg");
       }
+    }
+    
+    case CMD_GET_CACHE: {
+      char *ptr;
+      for(ptr = buf; ptr && ptr < buf + len && *ptr; ptr++) {
+      }
+      if(ptr == buf + len) {
+        return error_reply(rbuf, "badarg");
+      }
+      gh_cache_get(d, buf);
+      memcpy(*rbuf, "ok", 2);
+      return 2;
     }
     
     case CMD_DELETE_CACHE: {
@@ -392,13 +404,13 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       if(ptr == buf + len) {
         return error_reply(rbuf, "badarg");
       }
-      delete_cache(d, buf);
+      gh_cache_delete(d, buf);
       memcpy(*rbuf, "ok", 2);
       return 2;
     }
     
     case CMD_LIST_CACHE: {
-      list_cache(d);
+      gh_cache_list(d);
       memcpy(*rbuf, "ok", 2);
       return 2;
     }

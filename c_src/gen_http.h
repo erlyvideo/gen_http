@@ -43,6 +43,7 @@ enum {
     CMD_SET_CACHE = 9,
     CMD_DELETE_CACHE = 10,
     CMD_LIST_CACHE = 11,
+    CMD_GET_CACHE = 12,
     INET_REQ_GETFD = 14,
     INET_REQ_IGNOREFD = 28
     };
@@ -122,9 +123,10 @@ void activate_read(HTTP *d);
 void deactivate_read(HTTP *d);
 
 
-void init_cache();
+void gh_cache_init();
 int cached_reply(HTTP *d);
 
-void set_cache(HTTP *d, char *url, uint8_t *data, size_t len);
-void delete_cache(HTTP *d, char *url);
-void list_cache(HTTP *d);
+void gh_cache_set(HTTP *d, char *url, uint8_t *data, size_t len);
+void gh_cache_delete(HTTP *d, char *url);
+void gh_cache_list(HTTP *d);
+void gh_cache_get(HTTP *d, char *url);

@@ -9,7 +9,7 @@ main([Port]) ->
   {ok, Listen} = gen_http:listen(list_to_integer(Port), [{backlog,1000}]),
   
   Body = ["123456789\n" || _ <- lists:seq(1,5)],
-  gen_http:set_cache(Listen, "/dvb/2/manifest.f4m", [
+  gen_http:cache_set(Listen, "/dvb/2/manifest.f4m", [
     "HTTP/1.1 200 OK\r\n",
     "Content-Length: ", integer_to_list(iolist_size(Body)),"\r\n",
     "\r\n",

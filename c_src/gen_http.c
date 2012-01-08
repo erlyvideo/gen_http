@@ -521,7 +521,7 @@ static void accept_tcp(HTTP *d)
 }
 
 
-static void gen_http_drv_input(ErlDrvData handle, ErlDrvEvent event)
+static void gen_http_drv_ready_input(ErlDrvData handle, ErlDrvEvent event)
 {
   HTTP* d = (HTTP*) handle;
   
@@ -629,7 +629,7 @@ ErlDrvEntry gen_http_driver_entry = {
     gen_http_drv_start,		/* L_PTR start, called when port is opened */
     gen_http_drv_stop,		/* F_PTR stop, called when port is closed */
     NULL,	                /* F_PTR output, called when erlang has sent */
-    gen_http_drv_input,		/* F_PTR ready_input, called when input descriptor ready */
+    gen_http_drv_ready_input,		/* F_PTR ready_input, called when input descriptor ready */
     gen_http_drv_ready_output,	/* F_PTR ready_output, called when output descriptor ready */
     "gen_http_drv",		/* char *driver_name, the argument to open_port */
     NULL,			/* F_PTR finish, called when unloaded */

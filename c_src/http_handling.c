@@ -211,12 +211,12 @@ int on_headers_complete(http_parser *p) {
   reply[i++] = 2;
   
   
-  int j;
+  int j = 0;
   
   for(j = 0; j < d->headers_count; j++) {
     ErlDrvTermData atom = gen_http_hash_lookup(d->headers[j].field->orig_bytes, d->headers[j].field->orig_size, http_hdr_hash, HTTP_HDR_HASH_SIZE);
     
-    if(atom) {
+    if(atom != driver_term_nil) {
       reply[i++] = ERL_DRV_ATOM;
       reply[i++] = atom;
     } else {
@@ -225,7 +225,7 @@ int on_headers_complete(http_parser *p) {
       reply[i++] = (ErlDrvTermData)d->headers[j].field->orig_size;
       reply[i++] = 0;
     }
-
+  
     reply[i++] = ERL_DRV_BINARY;
     reply[i++] = (ErlDrvTermData)d->headers[j].value;
     reply[i++] = (ErlDrvTermData)d->headers[j].value->orig_size;
@@ -233,7 +233,7 @@ int on_headers_complete(http_parser *p) {
     
     reply[i++] = ERL_DRV_TUPLE;
     reply[i++] = 2;
-
+  
     // fprintf(stderr, "S> %.*s: %.*s\r\n", (int)d->headers[j].field->orig_size, d->headers[j].field->orig_bytes, (int)d->headers[j].value->orig_size, d->headers[j].value->orig_bytes);
   }
   
@@ -244,7 +244,10 @@ int on_headers_complete(http_parser *p) {
   reply[i++] = ERL_DRV_TUPLE;
   reply[i++] = d->mode == HANDLER_MODE ? 7 : d->mode == REQUEST_MODE ? 6 : -1;
   
-  driver_output_term(d->port, reply, i);
+  if(driver_output_term(d->port, reply, i) == -1) {
+    fprintf(stderr, "Failed to send message: %s\r\n", d->mode == HANDLER_MODE ? "handler" : d->mode == REQUEST_MODE ? "request" : "none!");
+  }
+  
   free_headers(d);
   // driver_free(reply);
   // reply[10] = ERL_DRV_TUPLE;

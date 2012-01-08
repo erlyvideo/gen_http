@@ -31,8 +31,10 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -type socket() :: port().
--type listen_options() :: [listen_option()].
--type listen_option() :: {port, inet:ip_port()}.
+-type listen_options() :: list({port, inet:ip_port()}).
+-type keepalive() :: keepalive | close.
+-type request() :: {http, gen_http:socket(), http_method(), binary(), keepalive(), http_version(), http_headers()}.
+-type response() :: {http, gen_http:socket(), Status::non_neg_integer(), keepalive(), http_version(), http_headers()}.
 
 -export_type([socket/0, listen_options/0]).
 

@@ -82,8 +82,14 @@ make_req(Sock) ->
         true -> ok
       end,
       T5 = erlang:now(),
-      % io:format("~10.. B ~10.. B ~10.. B ~10.. B ~10.. B ~10.. B~n", [Count, ?TD(T5,T1),?TD(T2,T1),?TD(T3,T2),?TD(T4,T3),?TD(T5,T4)]),
-      make_req(Sock);
+      case get(debug) of
+        true -> io:format("~10.. B ~10.. B ~10.. B ~10.. B ~10.. B ~10.. B~n", [Count, ?TD(T5,T1),?TD(T2,T1),?TD(T3,T2),?TD(T4,T3),?TD(T5,T4)]);
+        _ -> ok
+      end,
+      case Keepalive of
+        keepalive -> make_req(Sock);
+        close -> gen_http:close(Sock), make_req(undefined)
+      end;
     {http_closed, Sock} ->
       make_req(undefined);
     {http_error, Sock, Error} ->
@@ -98,7 +104,7 @@ receive_body(Sock, Acc) ->
   gen_http:active_once(Sock),
   receive
     {http, Sock, eof} -> lists:reverse(Acc);
-    {http, Sock, Bin} -> receive_body(Sock, Acc);
+    {http, Sock, Bin} -> receive_body(Sock, [Bin]);
     {http_error, Sock, Error} -> {error, Error};
     {http_closed, Sock} -> {error, closed}
   end.

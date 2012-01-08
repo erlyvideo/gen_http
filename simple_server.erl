@@ -1,5 +1,6 @@
 #!/usr/bin/env escript
 %%! -pa ebin  -smp enable +K true +A 16 +a 2048
+-mode(compile)
 
 
 cache_reply(Socket, Url, Size) ->
@@ -48,7 +49,7 @@ handle_client() ->
 handler_loop(Socket) ->
   gen_http:active_once(Socket),
   receive
-    {http, Socket, Method, URL, Keepalive, Version, Headers} = Req ->
+    {http, Socket, _Method, _URL, _Keepalive, _Version, _Headers} = Req ->
       io:format("Request: ~p~n", [Req]),
       % gen_http:flush_body(Socket),
       gen_http:send(Socket, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nGood\n"),

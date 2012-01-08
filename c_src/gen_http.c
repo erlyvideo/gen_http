@@ -485,6 +485,7 @@ static void accept_tcp(HTTP *d)
   driver_free(old);
   
   HTTP* c = driver_alloc(sizeof(HTTP));
+  bzero(c, sizeof(HTTP));
 
   c->owner_pid = owner;
   c->socket = fd;

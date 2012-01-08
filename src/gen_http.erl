@@ -28,15 +28,14 @@
 -include("log.hrl").
 -include("http.hrl").
 -include_lib("kernel/include/inet.hrl").
--include_lib("eunit/include/eunit.hrl").
 
 -type socket() :: port().
--type listen_options() :: list({port, inet:ip_port()}).
+-type listen_options() :: list({port, inet:port_number()}).
 -type keepalive() :: keepalive | close.
 -type request() :: {http, gen_http:socket(), http_method(), binary(), keepalive(), http_version(), http_headers()}.
 -type response() :: {http, gen_http:socket(), Status::non_neg_integer(), keepalive(), http_version(), http_headers()}.
 
--export_type([socket/0, listen_options/0]).
+-export_type([socket/0, listen_options/0, request/0, response/0]).
 
 % Common API
 -export([send/2, close/1, recv/2, recv/3, setopts/2]).
@@ -98,13 +97,13 @@ open_socket() ->
   	{error, already_loaded} -> ok;
   	{error, Error} -> exit({error, {could_not_load_driver,erl_ddll:format_error(Error)}})
   end,
-  Socket = erlang:open_port({spawn, gen_http_drv}, [binary]),
+  Socket = erlang:open_port({spawn_driver, "gen_http_drv"}, [binary]),
   erlang:port_set_data(Socket, inet_tcp),
   {ok, Socket}.
 
 %% @doc Opens listening socket
 
--spec listen(inet:ip_port() | gen_http:listen_options()) -> {ok, gen_http:socket()}.
+-spec listen(inet:port_number() | gen_http:listen_options()) -> {ok, gen_http:socket()}.
 listen(Port) when is_integer(Port) ->
   listen(Port, []);
 
@@ -113,7 +112,7 @@ listen(Options) when is_list(Options) ->
   listen(Port, Options).
 
 
--spec listen(inet:ip_port(), gen_http:listen_options()) -> {ok, gen_http:socket()}.
+-spec listen(inet:port_number(), gen_http:listen_options()) -> {ok, gen_http:socket()}.
 listen(Port, Options) ->
   {ok, Socket} = open_socket(),
   Reuseaddr = case proplists:get_value(reuseaddr, Options, true) of
@@ -195,11 +194,15 @@ flush(Socket) ->
     0 -> ok
   end.  
 
+-spec active_once(gen_http:socket()) -> ok.
 active_once(Socket) ->
-  (catch port_control(Socket, ?CMD_ACTIVE_ONCE, <<>>)).
+  (catch port_control(Socket, ?CMD_ACTIVE_ONCE, <<>>)),
+  ok.
 
+-spec accept_once(gen_http:socket()) -> ok.
 accept_once(Socket) ->
-  port_control(Socket, ?CMD_ACCEPT_ONCE, <<>>).
+  (catch port_control(Socket, ?CMD_ACCEPT_ONCE, <<>>)),
+  ok.
 
 accept(Listen, Timeout) ->
   accept_once(Listen),
@@ -238,11 +241,12 @@ recv(Socket, Length, Timeout, Acc) ->
 %% @doc Sets socket options
 -spec setopts(gen_http:socket(), [{chunk_size, integer()}]) -> ok.
 setopts(Socket, Options) ->
-  [setopt(Socket, K, V) || {K,V} <- Options],
+  lists:foreach(fun({K,V}) -> setopt(Socket, K, V) end, Options),
   ok.
 
 setopt(Socket, chunk_size, Size) when is_integer(Size) andalso Size > 0 ->
-  "ok" = port_control(Socket, ?CMD_SET_CHUNK_SIZE, <<Size:32/little>>).
+  "ok" = port_control(Socket, ?CMD_SET_CHUNK_SIZE, <<Size:32/little>>),
+  ok.
 
 
 %% @doc Send iolist to socket.
@@ -263,14 +267,14 @@ send(Socket, Bin) when is_port(Socket) ->
 
 %% @doc Connects to host/port
 
--spec connect(list(), inet:ip_port()) -> {ok, gen_http:socket()}.
+-spec connect(list(), inet:port_number()) -> {ok, gen_http:socket()}.
 connect(Host, Port) ->
   connect(Host, Port, []).
   
 connect(Host, Port, Options) ->
   connect(Host, Port, Options, proplists:get_value(timeout, Options, 10000)).
 
--spec connect(list(), inet:ip_port(), [{timeout,integer()}]) -> {ok, gen_http:socket()}.
+-spec connect(list(), inet:port_number(), [{timeout,integer()}]) -> {ok, gen_http:socket()}.
 connect(Host, Port, _Options, Timeout) ->
   case lookup_ip(Host) of
     {ok, IP} ->
@@ -334,7 +338,7 @@ cache_delete(Socket, URL) when is_list(URL) ->
 
 cache_delete(Socket, URL) when is_binary(URL) ->
   case erlang:port_info(Socket, name) of
-    {name, "gen_http_drv"} -> "ok" = port_control(Socket, ?CMD_DELETE_CACHE, <<URL/binary, 0>>);
+    {name, "gen_http_drv"} -> "ok" = port_control(Socket, ?CMD_DELETE_CACHE, <<URL/binary, 0>>), true;
     _ -> false
   end.
 
@@ -374,8 +378,8 @@ cache_get(Socket, Key) when is_binary(Key) ->
 %% @doc remove all keys from cache
 -spec cache_clear(gen_http:socket()) -> ok.
 cache_clear(Socket) ->
-  {ok, Keys} = cache_list(Socket),
-  [cache_delete(Socket, Key) || Key <- Keys],
+  Keys = cache_list(Socket),
+  lists:foreach(fun(Key) -> cache_delete(Socket, Key) end, Keys),
   ok.
 
 

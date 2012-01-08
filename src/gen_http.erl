@@ -32,7 +32,7 @@
 -type socket() :: port().
 -type listen_options() :: list({port, inet:port_number()}).
 -type keepalive() :: keepalive | close.
--type request() :: {http, gen_http:socket(), http_method(), binary(), keepalive(), http_version(), http_headers()}.
+-type request() :: {http, gen_http:socket(), http_method(), Path::binary(), keepalive(), http_version(), http_headers()}.
 -type response() :: {http, gen_http:socket(), Status::non_neg_integer(), keepalive(), http_version(), http_headers()}.
 
 -export_type([socket/0, listen_options/0, request/0, response/0, http_method/0]).

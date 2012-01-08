@@ -22,24 +22,25 @@ hostname_label() ->
 	?SUCHTHAT(Label, [hostname_head_char()|list(hostname_char())],
 		length(Label) < 64).
 
-hostname() ->
-	?SUCHTHAT(Hostname,
-		?LET(Labels, list(hostname_label()), string:join(Labels, ".")),
-		length(Hostname) > 0 andalso length(Hostname) =< 255).
-
-port_number() ->
-	choose(1, 16#ffff).
-
-port_str() ->
-	oneof(["", ?LET(Port, port_number(), ":" ++ integer_to_list(Port))]).
-
-hostvalue() ->
-  ?LET({Hostname, PortStr}, {hostname(), port_str()},
-		list_to_binary(Hostname ++ PortStr)).
+% hostname() ->
+%   ?SUCHTHAT(Hostname,
+%     ?LET(Labels, list(hostname_label()), string:join(Labels, ".")),
+%     length(Hostname) > 0 andalso length(Hostname) =< 255).
+% 
+% port_number() ->
+%   choose(1, 16#ffff).
+% 
+% port_str() ->
+%   oneof(["", ?LET(Port, port_number(), ":" ++ integer_to_list(Port))]).
+% 
+% hostvalue() ->
+%   ?LET({Hostname, PortStr}, {hostname(), port_str()},
+%     list_to_binary(Hostname ++ PortStr)).
 
 
 method() ->
-  oneof(gen_http:http_method()).
+  % oneof(gen_http:http_method()).
+  oneof(['GET']).
 
 path() ->
   ?SUCHTHAT(Path,
@@ -50,32 +51,59 @@ headers() ->
   [].
 
 body() ->
-  {[], <<>>}.
+  {[], undefined}.
 
 stub_request() ->
 	?LET({Method, Path, Headers, {BodyHeaders, Body}}, {method(), path(), headers(), body()},
-	#stub_request{path = Path, headers = lists:ukeysort(1, Headers ++ BodyHeaders), body = Body}).
+	#stub_request{method = Method, path = Path, headers = lists:ukeysort(1, Headers ++ BodyHeaders), body = Body}).
 	
 
-make_http_request(Port, #stub_request{}) ->
+url(#stub_request{path = Path}) ->
+  "http://localhost:"++integer_to_list(?PORT) ++ Path.
+
+make_http_request(#stub_request{method = Method, headers = Headers} = Req) ->
   inets:start(),
-  httpc:request().
+  SmallMethod = list_to_atom(string:to_lower(atom_to_list(Method))),
+  {ok, Ref} = httpc:request(SmallMethod, {url(Req), Headers}, [], [{sync,false},{stream,self}]),
+  {ok, Ref}.
 
-receive_http_request(Socket) ->
-  ok.
-	
+close_http_request(Ref) ->
+  httpc:cancel_request(Ref).
+
+receive_http_request(Listen) ->
+  gen_http:accept_once(Listen),
+  receive
+    {http_connection, Listen, Socket} ->
+      handle_http_connection(Socket)
+  after
+    1000 -> {error, timeout_accepting}  
+  end.
+
+handle_http_connection(Socket) ->
+  gen_http:active_once(Socket),
+  receive
+    {http, Socket, Method, Path, _Keepalive, _Version, Headers} ->
+      gen_http:close(Socket),
+      {ok, #stub_request{method = Method, path = binary_to_list(Path), headers = lists:ukeysort(1,Headers)}};
+    Else ->
+      {error, Else}  
+  after
+    1000 -> {error, timeout_receiving}
+  end.    
 
 prop_httpc_requests() ->
   ?FORALL(Request, stub_request(),
 	begin
-	  {ok, Socket} = gen_http:listen(?PORT),
-	  ok = make_http_request(?PORT, Request),
-	  Request1 = receive_http_request(Socket),
+    {ok, Listen} = gen_http:listen(?PORT),
+	  {ok, Ref} = make_http_request(Request),
+	  {ok, Request1} = receive_http_request(Listen),
+	  gen_http:close(Listen),
+	  close_http_request(Ref),
 	  Request == Request1
 	end).
 	
 
 proper_test_() ->
-    {timeout, 600,
-     ?_assertEqual(true, proper:module(?MODULE, [{to_file, user},
-                                                 {numtests, 1000}]))}.
+  {timeout, 600, fun() ->
+    ?assertEqual(true, proper:quickcheck(prop_httpc_requests(), [{numtests, 1000}]))
+  end}.

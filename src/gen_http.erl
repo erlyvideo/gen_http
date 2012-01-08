@@ -26,8 +26,15 @@
 -module(gen_http).
 -author('Max Lapshin <max@maxidoors.ru>').
 -include("log.hrl").
+-include("http.hrl").
 -include_lib("kernel/include/inet.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-type socket() :: port().
+-type listen_options() :: [listen_option()].
+-type listen_option() :: {port, inet:ip_port()}.
+
+-export_type([socket/0, listen_options/0]).
 
 % Common API
 -export([send/2, close/1, recv/2, recv/3, setopts/2]).
@@ -62,11 +69,23 @@
 -define(CMD_GET_CACHE, 12).
 -define(INET_REQ_GETFD, 14).
 
+
+%% @doc Name of this transport API, <em>gen_http</em>.
+-spec name() -> gen_http.
 name() -> gen_http.
 
+
+%% @doc Atoms used in the process messages sent by this API.
+%%
+%% They identify incoming data, closed connection and errors when receiving
+%% data in active mode.
+-spec messages() -> {http_connection, http, http_closed, http_error}.
 messages() -> {http_connection, http, http_closed, http_error}.
 
 
+%% @hidden
+%% @doc Opens plain gen_http socket
+-spec open_socket() -> {ok, gen_http:socket()}.
 open_socket() ->
   Path = case code:lib_dir(gen_http,priv) of
     P when is_list(P) -> P;
@@ -81,6 +100,9 @@ open_socket() ->
   erlang:port_set_data(Socket, inet_tcp),
   {ok, Socket}.
 
+%% @doc Opens listening socket
+
+-spec listen(inet:ip_port() | gen_http:listen_options()) -> {ok, gen_http:socket()}.
 listen(Port) when is_integer(Port) ->
   listen(Port, []);
 
@@ -88,6 +110,8 @@ listen(Options) when is_list(Options) ->
   Port = proplists:get_value(port, Options),
   listen(Port, Options).
 
+
+-spec listen(inet:ip_port(), gen_http:listen_options()) -> {ok, gen_http:socket()}.
 listen(Port, Options) ->
   {ok, Socket} = open_socket(),
   Reuseaddr = case proplists:get_value(reuseaddr, Options, true) of
@@ -112,6 +136,7 @@ parse_reply("ok") -> ok;
 parse_reply([0|Error]) -> {error, list_to_atom(Error)}.
 
 
+-spec controlling_process(gen_http:socket(), pid()) -> ok | {error, atom()}.
 controlling_process(Socket, NewOwner) when is_port(Socket), is_pid(NewOwner) ->
   case erlang:port_info(Socket, connected) of
 	  {connected, Pid} when Pid =/= self() ->
@@ -207,7 +232,9 @@ recv(Socket, Length, Timeout, Acc) ->
       Timeout -> {error, timeout}
   end.
   
-  
+
+%% @doc Sets socket options
+-spec setopts(gen_http:socket(), [{chunk_size, integer()}]) -> ok.
 setopts(Socket, Options) ->
   [setopt(Socket, K, V) || {K,V} <- Options],
   ok.
@@ -216,7 +243,9 @@ setopt(Socket, chunk_size, Size) when is_integer(Size) andalso Size > 0 ->
   "ok" = port_control(Socket, ?CMD_SET_CHUNK_SIZE, <<Size:32/little>>).
 
 
-
+%% @doc Send iolist to socket.
+%% This function is synchronous and blocking
+-spec send(gen_http:socket(), iolist()) -> ok | {error, atom()}.
 send(Socket, Bin) when is_port(Socket) ->
   try port_command(Socket, Bin) of
     true ->
@@ -230,12 +259,16 @@ send(Socket, Bin) when is_port(Socket) ->
   end.    
 
 
+%% @doc Connects to host/port
+
+-spec connect(list(), inet:ip_port()) -> {ok, gen_http:socket()}.
 connect(Host, Port) ->
   connect(Host, Port, []).
   
 connect(Host, Port, Options) ->
   connect(Host, Port, Options, proplists:get_value(timeout, Options, 10000)).
-  
+
+-spec connect(list(), inet:ip_port(), [{timeout,integer()}]) -> {ok, gen_http:socket()}.
 connect(Host, Port, _Options, Timeout) ->
   case lookup_ip(Host) of
     {ok, IP} ->
@@ -276,7 +309,8 @@ lookup_ip(Host) ->
       end
   end.  
 
-
+%% @doc Set in-driver cache. For key URL set Reply
+-spec cache_set(gen_http:socket(), list()|binary(), iolist() | binary()) -> true | false.
 cache_set(Socket, URL, Reply) when is_binary(URL) andalso is_binary(Reply) ->
   case erlang:port_info(Socket, name) of
     {name, "gen_http_drv"} -> "ok" == port_control(Socket, ?CMD_SET_CACHE, <<URL/binary, 0, Reply/binary>>);
@@ -291,29 +325,34 @@ cache_set(Socket, URL, Reply) when is_list(Reply) ->
 
 
 
+%% @doc Delete key from in-driver cache
+-spec cache_delete(gen_http:socket(), list()|binary()) -> true | false.
 cache_delete(Socket, URL) when is_list(URL) ->
   cache_delete(Socket, list_to_binary(URL));
 
 cache_delete(Socket, URL) when is_binary(URL) ->
   case erlang:port_info(Socket, name) of
     {name, "gen_http_drv"} -> "ok" = port_control(Socket, ?CMD_DELETE_CACHE, <<URL/binary, 0>>);
-    _ -> true
+    _ -> false
   end.
 
+%% @doc Lists all entries in cache
+-spec cache_list(gen_http:socket()) -> [binary()].
 cache_list(Socket) ->
   case erlang:port_info(Socket, name) of
     {name, "gen_http_drv"} ->
       "ok" = port_control(Socket, ?CMD_LIST_CACHE, <<>>),
       receive
-        {http_cache_list, Socket, URLS} -> {ok, URLS}
+        {http_cache_list, Socket, URLS} -> URLS
       after
-        5000 -> {error, timeout}
+        5000 -> erlang:exit(timeout)
       end;
     _ ->
-      {ok, []}
+      []
   end.
 
-
+%% @doc Get reply from in-driver cache for key Key
+-spec cache_get(gen_http:socket(), list()|binary()) -> binary() | undefined.
 cache_get(Socket, Key) when is_list(Key) ->
   cache_get(Socket, list_to_binary(Key));
   
@@ -330,6 +369,8 @@ cache_get(Socket, Key) when is_binary(Key) ->
       undefined
   end.
 
+%% @doc remove all keys from cache
+-spec cache_clear(gen_http:socket()) -> ok.
 cache_clear(Socket) ->
   {ok, Keys} = cache_list(Socket),
   [cache_delete(Socket, Key) || Key <- Keys],

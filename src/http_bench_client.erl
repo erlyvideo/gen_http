@@ -26,7 +26,7 @@ run(URL) ->
   
   io:format("~10.s ~10.s ~10.s ~10.s ~10.s ~10.s~n", [count, total, send, header, body, update]),
   
-  Pids = [spawn(fun() -> make_req(undefined) end) || _ <- lists:seq(1,10)],
+  Pids = [spawn(fun() -> make_req(undefined) end) || _ <- lists:seq(1,40)],
   [erlang:monitor(process, Pid) || Pid <- Pids],
   [receive
     {'DOWN', _, _, Pid, _} -> ok
@@ -46,7 +46,7 @@ run(URL) ->
   
 make_req(undefined) ->
   {Host, Port, Req} = ets:lookup_element(cache, req, 2),
-  ?D({reconnecting,self(), Host, Port}),
+  % ?D({reconnecting,self(), Host, Port}),
   {ok, Sock} = gen_http:connect(Host, Port),
   gen_http:setopts(Sock, [{chunk_size,1024*1024}]),
   put(req, Req),

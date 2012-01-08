@@ -1,5 +1,5 @@
 %%% @author     Max Lapshin <max@maxidoors.ru> [http://erlyvideo.org]
-%%% @copyright  2009-2011 Max Lapshin
+%%% @copyright  2012 Max Lapshin
 %%% @doc        HTTP linked-in driver
 %%% @reference  See <a href="http://erlyvideo.org/" target="_top">http://erlyvideo.org/</a> for more information
 %%% @end

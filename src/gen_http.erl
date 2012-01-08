@@ -35,7 +35,7 @@
 -type request() :: {http, gen_http:socket(), http_method(), binary(), keepalive(), http_version(), http_headers()}.
 -type response() :: {http, gen_http:socket(), Status::non_neg_integer(), keepalive(), http_version(), http_headers()}.
 
--export_type([socket/0, listen_options/0, request/0, response/0]).
+-export_type([socket/0, listen_options/0, request/0, response/0, http_method/0]).
 
 % Common API
 -export([send/2, close/1, recv/2, recv/3, setopts/2]).

@@ -89,7 +89,13 @@ handle_http_connection(Socket) ->
       {error, Else}  
   after
     1000 -> {error, timeout_receiving}
-  end.    
+  end.
+
+compare_requests(#stub_request{headers = Headers1} = Req1, #stub_request{headers = Headers2} = Req2) ->
+  Req1#stub_request{headers = clean_headers(Headers1)} == Req2#stub_request{headers = clean_headers(Headers2)}.
+
+clean_headers(Headers) ->
+  [{K,V} || {K,V} <- Headers, not lists:member(K, ['Host', 'Connection', <<"Te">>])].
 
 prop_httpc_requests() ->
   ?FORALL(Request, stub_request(),
@@ -99,11 +105,12 @@ prop_httpc_requests() ->
 	  {ok, Request1} = receive_http_request(Listen),
 	  gen_http:close(Listen),
 	  close_http_request(Ref),
-	  Request == Request1
+    % io:format("~p ~p ~p~n", [compare_requests(Request, Request1), Request, Request1]),
+	  compare_requests(Request, Request1)
 	end).
 	
 
 proper_test_() ->
   {timeout, 600, fun() ->
-    ?assertEqual(true, proper:quickcheck(prop_httpc_requests(), [{numtests, 1000}]))
+    ?assertEqual(true, proper:quickcheck(prop_httpc_requests(), [{numtests, 40}]))
   end}.

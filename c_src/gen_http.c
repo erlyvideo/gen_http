@@ -56,8 +56,8 @@ static void gen_http_drv_stop(ErlDrvData handle)
     d->body = NULL;
   }
   if(d->mode == LISTENER_MODE) {
-    Acceptor *a = d->acceptor;
-    Acceptor *next;
+    PidList *a = d->acceptor;
+    PidList *next;
     
     ErlDrvTermData reply[] = {
       ERL_DRV_ATOM, driver_mk_atom("http_closed"),
@@ -286,7 +286,7 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
         return error_reply(rbuf, "non_listener_mode");
       }
 
-      Acceptor *acceptor = driver_alloc(sizeof(Acceptor));
+      PidList *acceptor = driver_alloc(sizeof(PidList));
       acceptor->next = d->acceptor;
       acceptor->pid = driver_caller(d->port);
       
@@ -425,9 +425,9 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
 static void gen_http_process_exit(ErlDrvData handle, ErlDrvMonitor *monitor) {
   HTTP *d = (HTTP *)handle;
   ErlDrvTermData pid = driver_get_monitored_process(d->port, monitor);
-  Acceptor *a, *next;
-  Acceptor *root = NULL;
-  Acceptor *deleting = NULL;
+  PidList *a, *next;
+  PidList *root = NULL;
+  PidList *deleting = NULL;
   
   a = d->acceptor;
   
@@ -479,7 +479,7 @@ static void accept_tcp(HTTP *d)
   
   ErlDrvTermData owner = d->acceptor->pid;
   driver_demonitor_process(d->port, &d->acceptor->monitor);
-  Acceptor *old = d->acceptor;
+  PidList *old = d->acceptor;
   d->acceptor = d->acceptor->next;
   if(d->acceptor) activate_read(d);
   driver_free(old);

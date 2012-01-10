@@ -69,12 +69,13 @@ typedef struct {
   ErlDrvBinary *value;
 } Header;
 
-struct Acceptor;
-typedef struct Acceptor {
+struct PidList;
+typedef struct PidList {
   ErlDrvTermData pid;
   ErlDrvMonitor monitor;
-  struct Acceptor *next;
-} Acceptor;
+  struct PidList *next;
+} PidList;
+
 
 #define HTTP_MAX_HEADERS 100
 
@@ -97,7 +98,7 @@ typedef struct {
   
   int auto_reply;
   
-  Acceptor *acceptor;
+  PidList *acceptor;
   uint32_t chunk_size;
   size_t body_offset;
   

@@ -488,7 +488,12 @@ void read_http(HTTP *d) {
       return;
     }
 #endif
-#endif 
+#endif
+
+    if(bytes == 0) {
+      deactivate_read(d);
+      return;
+    }
     
     ErlDrvBinary *body = driver_alloc_binary(bytes);
     if(recv(d->socket, body->orig_bytes, body->orig_size, 0) != bytes) {
@@ -531,15 +536,17 @@ void read_http(HTTP *d) {
   
   if(d->parser->upgrade) {
     d->raw_mode = 1;
-    ErlDrvBinary *body = driver_alloc_binary(n - nparsed);
-    memcpy(body->orig_bytes, d->buffer->orig_bytes + nparsed, body->orig_size);
-    ErlDrvTermData reply[] = {
-      ERL_DRV_ATOM, driver_mk_atom("tcp"),
-      ERL_DRV_PORT, driver_mk_port(d->port),
-      ERL_DRV_BINARY, (ErlDrvTermData)body, (ErlDrvTermData)body->orig_size, 0,
-      ERL_DRV_TUPLE, 3
-    };
-    driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+    if(n > nparsed) {
+      ErlDrvBinary *body = driver_alloc_binary(n - nparsed);
+      memcpy(body->orig_bytes, d->buffer->orig_bytes + nparsed, body->orig_size);
+      ErlDrvTermData reply[] = {
+        ERL_DRV_ATOM, driver_mk_atom("tcp"),
+        ERL_DRV_PORT, driver_mk_port(d->port),
+        ERL_DRV_BINARY, (ErlDrvTermData)body, (ErlDrvTermData)body->orig_size, 0,
+        ERL_DRV_TUPLE, 3
+      };
+      driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+    }
     return;
   }
   

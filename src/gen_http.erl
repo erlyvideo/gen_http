@@ -81,8 +81,8 @@ name() -> gen_http.
 %%
 %% They identify incoming data, closed connection and errors when receiving
 %% data in active mode.
--spec messages() -> {http_connection, http, http_closed, http_error}.
-messages() -> {http_connection, http, http_closed, http_error}.
+-spec messages() -> {http, http_error, http_closed}.
+messages() -> {http, http_error, http_closed}.
 
 
 %% @hidden

@@ -12,6 +12,7 @@ compile:
 
 clean:
 	./rebar clean
+	@rm -f priv/*.so c_src/*.o test/*.beam
 
 test:
 	erl -make

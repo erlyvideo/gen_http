@@ -240,14 +240,17 @@ recv(Socket, Length, Timeout, Acc) ->
   
 
 %% @doc Sets socket options
--spec setopts(gen_http:socket(), [{chunk_size, integer()}]) -> ok.
+-spec setopts(gen_http:socket(), [{chunk_size, integer()}|{active,once}]) -> ok.
 setopts(Socket, Options) ->
   lists:foreach(fun({K,V}) -> setopt(Socket, K, V) end, Options),
   ok.
 
 setopt(Socket, chunk_size, Size) when is_integer(Size) andalso Size > 0 ->
   "ok" = port_control(Socket, ?CMD_SET_CHUNK_SIZE, <<Size:32/little>>),
-  ok.
+  ok;
+
+setopt(Socket, active, once) ->
+  active_once(Socket).
 
 
 %% @doc Send iolist to socket.

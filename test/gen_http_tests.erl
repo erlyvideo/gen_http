@@ -108,4 +108,34 @@ blocking_send_test_() ->
   
   end}.
 
+
+raw_mode_test_() ->
+  {spawn, fun() ->
+    {ok, L} = gen_http:listen(?PORT),
+    Self = self(),
+    
+    _Pid1 = spawn_link(fun() ->
+      {ok, S} = gen_tcp:connect("localhost", ?PORT, [binary,{active,false}]),
+      ok = gen_tcp:send(S, "GET / HTTP/1.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\n\r\nHi!\n"),
+      ?assertEqual({ok, <<"Bye\n">>}, gen_tcp:recv(S, 4)),
+      Self ! ok
+    end),
+    
+    Self = self(),
+    ?D(h0),
+    spawn_link(fun() -> multiacceptor1(Self, L, 1) end),
+
+    %% First check 'empty' message
+    Sock = receive {sock, 1, S} -> S after 1000 -> erlang:exit({timeout,parent,1}) end,
+    gen_http:active_once(Sock),
+    receive 
+      {tcp, Sock, <<"Hi!\n">>} -> ok
+    after
+      1000 -> erlang:exit({invalid,client})
+    end,
+    gen_http:send(Sock, "Bye\n"),
+    gen_http:send_async(Sock, crypto:rand_bytes(1024*1024)),
+    receive ok -> ok after 1000 -> erlang:exit({timeout,child}) end,
+    ok
+  end}.
   

@@ -471,6 +471,44 @@ void accept_connection(HTTP *d) {
 
 void read_http(HTTP *d) {
 
+  if(d->raw_mode) {
+    int bytes = 0;
+#ifdef linux
+    if(ioctl(d->socket, FIONREAD, &bytes) == -1) {
+      fprintf(stderr, "Can't find out received amount of bytes\r\n");
+      tcp_exit(d);
+      return;
+    }
+#else 
+#ifdef __APPLE__
+    socklen_t size = sizeof(bytes);
+    if(getsockopt(d->socket, SOL_SOCKET, SO_NREAD, &bytes, &size) == -1) {
+      fprintf(stderr, "Can't find out received amount of bytes\r\n");
+      tcp_exit(d);
+      return;
+    }
+#endif
+#endif 
+    
+    ErlDrvBinary *body = driver_alloc_binary(bytes);
+    if(recv(d->socket, body->orig_bytes, body->orig_size, 0) != bytes) {
+      driver_free_binary(body);
+      fprintf(stderr, "Can't received incoming bytes\r\n");
+      tcp_exit(d);
+      return;
+    }
+    
+    ErlDrvTermData reply[] = {
+      ERL_DRV_ATOM, driver_mk_atom("tcp"),
+      ERL_DRV_PORT, driver_mk_port(d->port),
+      ERL_DRV_BINARY, (ErlDrvTermData)body, (ErlDrvTermData)bytes, 0,
+      ERL_DRV_TUPLE, 3
+    };
+    driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
+    
+  }
+
+
   ssize_t n = recv(d->socket, d->buffer->orig_bytes, d->buffer->orig_size, 0);
   
   if(n == 0 || (n < 0 && errno == ECONNRESET)) {
@@ -492,8 +530,16 @@ void read_http(HTTP *d) {
   ssize_t nparsed = http_parser_execute(d->parser, &d->settings, d->buffer->orig_bytes, n);
   
   if(d->parser->upgrade) {
-    fprintf(stderr, "Websockets not supported\n");
-    tcp_exit(d);
+    d->raw_mode = 1;
+    ErlDrvBinary *body = driver_alloc_binary(n - nparsed);
+    memcpy(body->orig_bytes, d->buffer->orig_bytes + nparsed, body->orig_size);
+    ErlDrvTermData reply[] = {
+      ERL_DRV_ATOM, driver_mk_atom("tcp"),
+      ERL_DRV_PORT, driver_mk_port(d->port),
+      ERL_DRV_BINARY, (ErlDrvTermData)body, (ErlDrvTermData)body->orig_size, 0,
+      ERL_DRV_TUPLE, 3
+    };
+    driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
     return;
   }
   

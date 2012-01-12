@@ -91,6 +91,7 @@ typedef struct {
   ErlDrvTermData owner_pid;
   int socket;
   unsigned long timeout;
+  int raw_mode;
   SocketMode mode;
   SocketState state;
   http_parser_settings settings;

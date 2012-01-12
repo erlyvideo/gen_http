@@ -77,9 +77,6 @@ int on_message_begin(http_parser *p) {
   d->url = NULL;
   d->headers_count = 0;
   d->settings.on_body = receive_body;
-  if(d->body) {
-    fprintf(stderr, "Body: %p, %d, %.*s\r\n", d->body, (int)d->body->orig_size, (int)d->body->orig_size, d->body->orig_bytes);
-  }
   assert(!d->body);
   return 0;
 }
@@ -165,10 +162,9 @@ int on_headers_complete(http_parser *p) {
 
   assert(!d->body);
   
-  if(d->mode == HANDLER_MODE && cached_reply(d)) {
-    d->has_body = (p->method == HTTP_POST || p->method == HTTP_PUT);
+  if(p->method == HTTP_GET && d->mode == HANDLER_MODE && cached_reply(d)) {
     free_headers(d);
-    return p->method == HTTP_HEAD ? 1 : 0;
+    return 0;
   }
   
   deactivate_read(d);

@@ -11,6 +11,89 @@ ErlDrvTermData method_atoms[HTTP_PATCH+1];
 
 
 
+static void send_message_to_pids(PidList *a, ErlDrvPort port, ErlDrvTermData *reply, size_t reply_size) {
+  PidList *next;
+  
+  
+  while(a) {
+    next = a->next;
+    driver_send_term(port, a->pid, reply, reply_size);
+    a = next;
+  }  
+}
+
+static void free_pid_list(PidList **head) {
+  PidList *a = *head;
+  PidList *next;
+  
+  
+  while(a) {
+    next = a->next;
+    driver_free(a);
+    a = next;
+  }
+  
+  *head = NULL;
+}
+
+static int add_caller_to_list(PidList **head, ErlDrvPort port) {
+  PidList *acceptor = driver_alloc(sizeof(PidList));
+  acceptor->next = *head;
+  acceptor->pid = driver_caller(port);
+  
+  if (driver_monitor_process(port, acceptor->pid ,&acceptor->monitor) != 0) {
+    driver_free(acceptor);
+    return 0;
+  }
+  
+  *head = acceptor;
+  return 1;
+}
+
+
+static void delete_pid_from_list(PidList **head, ErlDrvPort port, ErlDrvMonitor *monitor) {
+  
+  ErlDrvTermData pid = driver_get_monitored_process(port, monitor);
+  
+  PidList *a, *next;
+  PidList *root = NULL;
+  PidList *deleting = NULL;
+  
+  a = *head;
+  
+  while(a) {
+    next = a->next;
+    if(a->pid == pid) {
+      a->next = deleting;
+      deleting = a;
+    } else {
+      a->next = root;
+      root = a;
+    }
+    a = next;
+  }
+  *head = root;
+  while(deleting) {
+    // fprintf(stderr, "Removing dead acceptor\r\n");
+    
+    
+    driver_demonitor_process(port, &deleting->monitor);
+    next = deleting->next;
+    driver_free(deleting);
+    deleting = next;
+  }
+  
+}
+
+
+static void remove_head_from_list(PidList **head, ErlDrvPort port) {
+  if(!*head) return;
+  driver_demonitor_process(port, &(*head)->monitor);
+  PidList *old = *head;
+  *head = (*head)->next;
+  driver_free(old);
+}
+
 
 static int gen_http_init(void) {
   atom_http = driver_mk_atom("http");
@@ -56,22 +139,14 @@ static void gen_http_drv_stop(ErlDrvData handle)
     d->body = NULL;
   }
   if(d->mode == LISTENER_MODE) {
-    PidList *a = d->acceptor;
-    PidList *next;
-    
     ErlDrvTermData reply[] = {
       ERL_DRV_ATOM, driver_mk_atom("http_closed"),
       ERL_DRV_PORT, driver_mk_port(d->port),
       ERL_DRV_TUPLE, (ErlDrvTermData)2
     };
     
-    while(a) {
-      next = a->next;
-      driver_send_term(d->port, a->pid, reply, sizeof(reply) / sizeof(reply[0]));      
-      driver_free(a);
-      a = next;
-    }
-    
+    send_message_to_pids(d->acceptor, d->port, reply, sizeof(reply) / sizeof(reply[0]));
+    free_pid_list(&d->acceptor);
   }
   
   deactivate_write(d);
@@ -286,16 +361,10 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
         return error_reply(rbuf, "non_listener_mode");
       }
 
-      PidList *acceptor = driver_alloc(sizeof(PidList));
-      acceptor->next = d->acceptor;
-      acceptor->pid = driver_caller(d->port);
-      
-	    if (driver_monitor_process(d->port, acceptor->pid ,&acceptor->monitor) != 0) {
-        driver_free(acceptor);
+      if(!add_caller_to_list(&d->acceptor, d->port)) {
         return error_reply(rbuf, "noproc");
-  	  }
+      }
       activate_read(d);
-      d->acceptor = acceptor;
       
       memcpy(*rbuf, "ok", 2);
       return 2;
@@ -424,34 +493,8 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
 
 static void gen_http_process_exit(ErlDrvData handle, ErlDrvMonitor *monitor) {
   HTTP *d = (HTTP *)handle;
-  ErlDrvTermData pid = driver_get_monitored_process(d->port, monitor);
-  PidList *a, *next;
-  PidList *root = NULL;
-  PidList *deleting = NULL;
   
-  a = d->acceptor;
-  
-  while(a) {
-    next = a->next;
-    if(a->pid == pid) {
-      a->next = deleting;
-      deleting = a;
-    } else {
-      a->next = root;
-      root = a;
-    }
-    a = next;
-  }
-  d->acceptor = root;
-  while(deleting) {
-    // fprintf(stderr, "Removing dead acceptor\r\n");
-    
-    
-    driver_demonitor_process(d->port, &deleting->monitor);
-    next = deleting->next;
-    driver_free(deleting);
-    deleting = next;
-  }
+  delete_pid_from_list(&d->acceptor, d->port, monitor);
 }
 
 static void accept_tcp(HTTP *d)
@@ -478,11 +521,9 @@ static void accept_tcp(HTTP *d)
   }
   
   ErlDrvTermData owner = d->acceptor->pid;
-  driver_demonitor_process(d->port, &d->acceptor->monitor);
-  PidList *old = d->acceptor;
-  d->acceptor = d->acceptor->next;
+
+  remove_head_from_list(&d->acceptor, d->port);
   if(d->acceptor) activate_read(d);
-  driver_free(old);
   
   HTTP* c = driver_alloc(sizeof(HTTP));
   bzero(c, sizeof(HTTP));

@@ -118,6 +118,8 @@ raw_mode_test_() ->
       {ok, S} = gen_tcp:connect("localhost", ?PORT, [binary,{active,false}]),
       ok = gen_tcp:send(S, "GET / HTTP/1.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\n\r\nHi!\n"),
       ?assertEqual({ok, <<"Bye\n">>}, gen_tcp:recv(S, 4)),
+      ok = gen_tcp:send(S, "Msg2\n"),
+      ?assertEqual({ok, <<"Reply2\n">>}, gen_tcp:recv(S, 7)),
       Self ! ok
     end),
     
@@ -134,6 +136,13 @@ raw_mode_test_() ->
       1000 -> erlang:exit({invalid,client})
     end,
     gen_http:send(Sock, "Bye\n"),
+    gen_http:setopts(Sock, [{active,once}]),
+    receive
+      {tcp, Sock, <<"Msg2\n">>} -> ok
+    after
+      1000 -> erlang:exit({timeout,parent,2})
+    end,
+    gen_http:send(Sock, "Reply2\n"),
     gen_http:send_async(Sock, crypto:rand_bytes(1024*1024)),
     receive ok -> ok after 1000 -> erlang:exit({timeout,child}) end,
     ok

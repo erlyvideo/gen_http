@@ -38,7 +38,7 @@
 -export_type([socket/0, listen_options/0, request/0, response/0, http_method/0]).
 
 % Common API
--export([send/2, close/1, recv/2, recv/3, setopts/2]).
+-export([send/2, send_async/2, wait_send/1, close/1, recv/2, recv/3, setopts/2]).
 
 % Server API
 -export([listen/2, listen/1, controlling_process/2, active_once/1, peername/1]).
@@ -68,6 +68,7 @@
 -define(CMD_DELETE_CACHE, 10).
 -define(CMD_LIST_CACHE, 11).
 -define(CMD_GET_CACHE, 12).
+-define(CMD_GET_EXHAUSTED, 13).
 -define(INET_REQ_GETFD, 14).
 
 
@@ -253,16 +254,35 @@ setopt(Socket, chunk_size, Size) when is_integer(Size) andalso Size > 0 ->
 %% This function is synchronous and blocking
 -spec send(gen_http:socket(), iolist()) -> ok | {error, atom()}.
 send(Socket, Bin) when is_port(Socket) ->
+  case send_async(Socket, Bin) of
+    ok -> wait_send(Socket);
+    {error, Error} -> {error, Error}
+  end.    
+
+
+%% @doc Sends iolist to socket in async manner.
+%% Don't worry: you will be blocked when buffer size is over
+-spec send_async(gen_http:socket(), iolist()) -> ok | {error, atom()}.
+send_async(Socket, Bin) when is_port(Socket) ->
   try port_command(Socket, Bin) of
-    true ->
+    true -> ok
+  catch
+    error:Error -> {error, Error}
+  end.  
+  
+%% @doc Waits for socket to be fully emptied.
+-spec wait_send(gen_http:socket()) -> ok | {error, atom()}.
+wait_send(Socket) when is_port(Socket) ->
+  case port_control(Socket, ?CMD_GET_EXHAUSTED, <<>>) of
+    "ok" -> ok;
+    "wait" ->
       receive
         {http, Socket, empty} -> ok;
         {http_error, Socket, Error} -> {error, Error};
         {http_closed, Socket} -> {error, closed}
       end
-  catch
-    error:Error -> {error, Error}
-  end.    
+  end.
+  
 
 
 %% @doc Connects to host/port

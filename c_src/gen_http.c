@@ -11,90 +11,6 @@ ErlDrvTermData method_atoms[HTTP_PATCH+1];
 
 
 
-static void send_message_to_pids(PidList *a, ErlDrvPort port, ErlDrvTermData *reply, size_t reply_size) {
-  PidList *next;
-  
-  
-  while(a) {
-    next = a->next;
-    driver_send_term(port, a->pid, reply, reply_size);
-    a = next;
-  }  
-}
-
-static void free_pid_list(PidList **head) {
-  PidList *a = *head;
-  PidList *next;
-  
-  
-  while(a) {
-    next = a->next;
-    driver_free(a);
-    a = next;
-  }
-  
-  *head = NULL;
-}
-
-static int add_caller_to_list(PidList **head, ErlDrvPort port) {
-  PidList *acceptor = driver_alloc(sizeof(PidList));
-  acceptor->next = *head;
-  acceptor->pid = driver_caller(port);
-  
-  if (driver_monitor_process(port, acceptor->pid ,&acceptor->monitor) != 0) {
-    driver_free(acceptor);
-    return 0;
-  }
-  
-  *head = acceptor;
-  return 1;
-}
-
-
-static void delete_pid_from_list(PidList **head, ErlDrvPort port, ErlDrvMonitor *monitor) {
-  
-  ErlDrvTermData pid = driver_get_monitored_process(port, monitor);
-  
-  PidList *a, *next;
-  PidList *root = NULL;
-  PidList *deleting = NULL;
-  
-  a = *head;
-  
-  while(a) {
-    next = a->next;
-    if(a->pid == pid) {
-      a->next = deleting;
-      deleting = a;
-    } else {
-      a->next = root;
-      root = a;
-    }
-    a = next;
-  }
-  *head = root;
-  while(deleting) {
-    // fprintf(stderr, "Removing dead acceptor\r\n");
-    
-    
-    driver_demonitor_process(port, &deleting->monitor);
-    next = deleting->next;
-    driver_free(deleting);
-    deleting = next;
-  }
-  
-}
-
-
-static void remove_head_from_list(PidList **head, ErlDrvPort port) {
-  if(!*head) return;
-  driver_demonitor_process(port, &(*head)->monitor);
-  PidList *old = *head;
-  *head = (*head)->next;
-  driver_free(old);
-}
-
-
 static int gen_http_init(void) {
   atom_http = driver_mk_atom("http");
   atom_keepalive = driver_mk_atom("keepalive");
@@ -138,16 +54,17 @@ static void gen_http_drv_stop(ErlDrvData handle)
     driver_free_binary(d->body);
     d->body = NULL;
   }
-  if(d->mode == LISTENER_MODE) {
-    ErlDrvTermData reply[] = {
-      ERL_DRV_ATOM, driver_mk_atom("http_closed"),
-      ERL_DRV_PORT, driver_mk_port(d->port),
-      ERL_DRV_TUPLE, (ErlDrvTermData)2
-    };
-    
-    send_message_to_pids(d->acceptor, d->port, reply, sizeof(reply) / sizeof(reply[0]));
-    free_pid_list(&d->acceptor);
-  }
+  
+  ErlDrvTermData reply[] = {
+    ERL_DRV_ATOM, driver_mk_atom("http_closed"),
+    ERL_DRV_PORT, driver_mk_port(d->port),
+    ERL_DRV_TUPLE, (ErlDrvTermData)2
+  };
+  
+  pid_list_send(d->acceptor, d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  pid_list_free(&d->acceptor);
+  pid_list_send(d->exhausted, d->port, reply, sizeof(reply) / sizeof(reply[0]));
+  pid_list_free(&d->exhausted);
   
   deactivate_write(d);
   deactivate_read(d);
@@ -156,7 +73,7 @@ static void gen_http_drv_stop(ErlDrvData handle)
 }
 
 
-static void tcp_exit(HTTP *d)
+void tcp_exit(HTTP *d)
 {
   deactivate_write(d);
   deactivate_read(d);
@@ -168,68 +85,6 @@ static void tcp_exit(HTTP *d)
   driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
   driver_exit(d->port, 0);
 }
-
-static void gen_http_drv_schedule_write(ErlDrvData handle, ErlIOVec *ev)
-{
-  HTTP* d = (HTTP *)handle;
-  driver_enqv(d->port, ev, 0);
-  //fprintf(stderr, "Queue %d bytes, %d\r\n", ev->size,  driver_sizeq(d->port));
-  activate_write(d);
-}
-
-
-
-static void gen_http_drv_ready_output(ErlDrvData handle, ErlDrvEvent event)
-{
-  HTTP* d = (HTTP*) handle;
-  
-  if(d->mode == REQUEST_MODE && d->state == CONNECTING_STATE) {
-    accept_connection(d);
-    return;
-  }
-  
-  
-  SysIOVec* vec;
-  int vlen = 0;
-  size_t written;
-  driver_set_timer(d->port, d->timeout);
-  vec = driver_peekq(d->port, &vlen);
-  if(!vec || !vlen) {
-    driver_select(d->port, (ErlDrvEvent)d->socket, DO_WRITE, 0);
-    return;
-  }
-  written = writev(d->socket, (const struct iovec *)vec, vlen > IOV_MAX ? IOV_MAX : vlen);
-  if(vlen > IOV_MAX) {
-    fprintf(stderr, "Buffer overloaded: %d, %d\r\n", vlen, (int)(driver_sizeq(d->port) - written));
-  }
-  if(written == -1) {
-    if((errno != EWOULDBLOCK) && (errno != EINTR) && (errno != EAGAIN)) {
-        fprintf(stderr, "Error in writev: %s, %d bytes left\r\n", strerror(errno), (int)driver_sizeq(d->port));
-      tcp_exit(d);
-      return;
-    }
-  } else {
-    ErlDrvSizeT rest = driver_deq(d->port, written);
-    
-    if(rest == 0) {
-      if(d->auto_reply) {
-        d->auto_reply = 0;
-      } else {
-      ErlDrvTermData reply[] = {
-        ERL_DRV_ATOM, atom_http,
-        ERL_DRV_PORT, driver_mk_port(d->port),
-        ERL_DRV_ATOM, atom_empty,
-        ERL_DRV_TUPLE, 3
-      };
-      
-      driver_output_term(d->port, reply, sizeof(reply) / sizeof(reply[0]));
-      }
-    }
-    // fprintf(stderr, "Network write: %d (%d)\r\n", (int)written, (int)rest);
-    
-  }
-}
-
 
 void activate_write(HTTP *d) {
   driver_select(d->port, (ErlDrvEvent)d->socket, ERL_DRV_WRITE, 1);
@@ -361,7 +216,7 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
         return error_reply(rbuf, "non_listener_mode");
       }
 
-      if(!add_caller_to_list(&d->acceptor, d->port)) {
+      if(!pid_list_add_caller(&d->acceptor, d->port)) {
         return error_reply(rbuf, "noproc");
       }
       activate_read(d);
@@ -484,6 +339,17 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       return 2;
     }
     
+    case CMD_GET_EXHAUSTED: {
+      if(driver_sizeq(d->port) == 0) {
+        memcpy(*rbuf, "ok", 2);
+        return 2;
+      } else {
+        pid_list_add_caller(&d->exhausted, d->port);
+        memcpy(*rbuf, "wait", 4);
+        return 4;
+      }
+    }
+    
     default: {
       return error_reply(rbuf, "unknown_command");
     }
@@ -494,7 +360,8 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
 static void gen_http_process_exit(ErlDrvData handle, ErlDrvMonitor *monitor) {
   HTTP *d = (HTTP *)handle;
   
-  delete_pid_from_list(&d->acceptor, d->port, monitor);
+  pid_list_delete(&d->acceptor, d->port, monitor);
+  pid_list_delete(&d->exhausted, d->port, monitor);
 }
 
 static void accept_tcp(HTTP *d)
@@ -522,7 +389,7 @@ static void accept_tcp(HTTP *d)
   
   ErlDrvTermData owner = d->acceptor->pid;
 
-  remove_head_from_list(&d->acceptor, d->port);
+  pid_list_remove_head(&d->acceptor, d->port);
   if(d->acceptor) activate_read(d);
   
   HTTP* c = driver_alloc(sizeof(HTTP));
@@ -548,6 +415,7 @@ static void accept_tcp(HTTP *d)
   c->settings.on_body = receive_body;
   c->settings.on_message_complete = on_message_complete;
   c->normalize_headers = 1;
+  c->buffer_limit = DEFAULT_BUFFER_LIMIT;
   http_parser_init(c->parser, HTTP_REQUEST);
   c->buffer = driver_alloc_binary(d->chunk_size);
   driver_set_timer(c->port, c->timeout);
@@ -685,7 +553,7 @@ ErlDrvEntry gen_http_driver_entry = {
     ERL_DRV_EXTENDED_MARKER,          /* ERL_DRV_EXTENDED_MARKER */
     ERL_DRV_EXTENDED_MAJOR_VERSION,   /* ERL_DRV_EXTENDED_MAJOR_VERSION */
     ERL_DRV_EXTENDED_MINOR_VERSION,   /* ERL_DRV_EXTENDED_MINOR_VERSION */
-    ERL_DRV_FLAG_USE_PORT_LOCKING,     /* ERL_DRV_FLAGs */
+    ERL_DRV_FLAG_USE_PORT_LOCKING|ERL_DRV_FLAG_SOFT_BUSY,     /* ERL_DRV_FLAGs */
     NULL,     /* void *handle2 */
     gen_http_process_exit,     /* process_exit */
     NULL      /* stop_select */

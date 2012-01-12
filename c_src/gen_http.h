@@ -18,6 +18,7 @@
 #include "http_hash.h"
 
 #define DEFAULT_CHUNK_SIZE 65536
+#define DEFAULT_BUFFER_LIMIT 2*1024*1024
 
 
 extern ErlDrvTermData atom_http;
@@ -44,6 +45,7 @@ enum {
     CMD_DELETE_CACHE = 10,
     CMD_LIST_CACHE = 11,
     CMD_GET_CACHE = 12,
+    CMD_GET_EXHAUSTED = 13,
     INET_REQ_GETFD = 14,
     INET_REQ_IGNOREFD = 28
     };
@@ -76,6 +78,11 @@ typedef struct PidList {
   struct PidList *next;
 } PidList;
 
+void pid_list_send(PidList *a, ErlDrvPort port, ErlDrvTermData *reply, size_t reply_size);
+void pid_list_free(PidList **head);
+int pid_list_add_caller(PidList **head, ErlDrvPort port);
+void pid_list_delete(PidList **head, ErlDrvPort port, ErlDrvMonitor *monitor);
+void pid_list_remove_head(PidList **head, ErlDrvPort port);
 
 #define HTTP_MAX_HEADERS 100
 
@@ -99,8 +106,11 @@ typedef struct {
   int auto_reply;
   
   PidList *acceptor;
+  PidList *exhausted;
   uint32_t chunk_size;
   size_t body_offset;
+  
+  size_t buffer_limit;
   
   Config config; // Only for listener mode
 } HTTP;
@@ -116,7 +126,10 @@ int on_header_value(http_parser *p, const char *field, size_t len);
 int on_headers_complete(http_parser *p);
 int on_message_complete(http_parser *p);
 void accept_connection(HTTP *d);
+void tcp_exit(HTTP *d);
 
+void gen_http_drv_schedule_write(ErlDrvData handle, ErlIOVec *ev);
+void gen_http_drv_ready_output(ErlDrvData handle, ErlDrvEvent event);
 
 void activate_write(HTTP *d);
 void deactivate_write(HTTP *d);

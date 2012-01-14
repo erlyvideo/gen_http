@@ -63,11 +63,13 @@ multiaccept_test_() ->
     receive {refused,2} -> ok after 1000 -> erlang:exit({timeout,parent,2}) end,
     receive {sock,3,_} -> ok after 1000 -> erlang:exit({timeout,parent,3}) end,
 
+
     % Now check backlog
     ?assertMatch({ok, _}, gen_tcp:connect("localhost", ?PORT, [], 300)),
     ?assertMatch({ok, _}, gen_tcp:connect("localhost", ?PORT, [], 300)),
     ?assertEqual({error, timeout}, gen_tcp:connect("localhost", ?PORT, [], 300)),
 
+    gen_http:close(L),
     ok
   end}.
 
@@ -104,9 +106,39 @@ blocking_send_test_() ->
   
   true = erlang:port_command(Sock, crypto:rand_bytes(3*1024*1024), [nosuspend]),
   false = erlang:port_command(Sock, crypto:rand_bytes(3*1024*1024), [nosuspend]),
+  gen_http:close(L),
   Pid1 ! recv2
   
   end}.
+
+
+
+% client_chunk_size_test_() ->
+%   {spawn, fun() ->
+%     Pid = spawn_link(fun() ->
+%       {ok, L} = gen_http:listen(?PORT),
+%       gen_http:accept_once(L),
+%       S = receive {http_connection, L, S_} -> S_ after 1000 -> erlang:exit({timeout,listener}) end,
+%       gen_http:setopts(S, [{chunk_size, 5000}]),
+%       gen_http:active_once(S),
+%       receive {http, S, _Method, _Path, _Keepalive, _Version, _Headers} -> ok after 1000 -> erlang:exit({timeout,accept}) end,
+%       ?D(zzz),
+%       % receive A -> ?D(A) end,
+%       receive {http, S, _Bin} -> ?D({http, size(_Bin)}), ok after 0 -> ok end,
+%       gen_http:active_once(S),
+%       B = receive {http, S, B_} -> B_ after 100 -> erlang:exit({timeout,read_body}) end,
+%       ?D({size(B), B}),
+%       % ?assertEqual(5000, size(B)),
+%       gen_http:close(S),
+%       ok
+%     end),
+%     
+%     {ok, Sock} = gen_http:connect("localhost", ?PORT),
+%     Body = crypto:rand_bytes(100001),
+%     gen_http:send(Sock, ["PUT / HTTP/1.1\r\nContent-Length: ", integer_to_list(size(Body)),"\r\n\r\n", Body]),
+%     receive A -> ?D(A) after 100 -> erlang:exit(a) end,
+%     Pid ! stop
+%   end}.
 
 
 raw_mode_test_() ->
@@ -126,6 +158,7 @@ raw_mode_test_() ->
     Self = self(),
     ?D(h0),
     spawn_link(fun() -> multiacceptor1(Self, L, 1) end),
+    gen_http:close(L),
 
     %% First check 'empty' message
     Sock = receive {sock, 1, S} -> S after 1000 -> erlang:exit({timeout,parent,1}) end,

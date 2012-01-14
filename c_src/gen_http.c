@@ -469,6 +469,11 @@ void accept_connection(HTTP *d) {
 }
 
 
+#ifdef linux
+#include <asm-generic/ioctls.h>
+#endif
+
+
 void read_http(HTTP *d) {
 
   if(d->raw_mode) {

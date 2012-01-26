@@ -278,7 +278,7 @@ static ErlDrvSSizeT gen_http_drv_command(ErlDrvData handle, unsigned int command
       d->settings.on_message_complete = on_message_complete;
       d->normalize_headers = 1;
       http_parser_init(d->parser, HTTP_RESPONSE);
-      d->buffer = driver_alloc_binary(d->chunk_size);
+      d->buffer = driver_alloc_binary(DEFAULT_REQUEST_SIZE);
       
       activate_write(d);
       memcpy(*rbuf, "ok", 2);
@@ -471,6 +471,11 @@ void accept_connection(HTTP *d) {
   deactivate_read(d);
   deactivate_write(d);
 }
+
+
+#ifdef linux
+#include <asm-generic/ioctls.h>
+#endif
 
 
 void read_http(HTTP *d) {

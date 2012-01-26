@@ -18,6 +18,7 @@
 #include "http_hash.h"
 
 #define DEFAULT_CHUNK_SIZE 65536
+#define DEFAULT_REQUEST_SIZE 10240
 #define DEFAULT_BUFFER_LIMIT 2*1024*1024
 
 

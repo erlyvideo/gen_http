@@ -141,10 +141,12 @@ blocking_send_test_() ->
 %   end}.
 
 
-raw_mode_test_() ->
+raw_mode_test1_() ->
   {spawn, fun() ->
     {ok, L} = gen_http:listen(?PORT),
     Self = self(),
+    spawn_link(fun() -> multiacceptor1(Self, L, 1) end),
+    
     
     _Pid1 = spawn_link(fun() ->
       {ok, S} = gen_tcp:connect("localhost", ?PORT, [binary,{active,false}]),
@@ -155,9 +157,6 @@ raw_mode_test_() ->
       Self ! ok
     end),
     
-    Self = self(),
-    ?D(h0),
-    spawn_link(fun() -> multiacceptor1(Self, L, 1) end),
     gen_http:close(L),
 
     %% First check 'empty' message

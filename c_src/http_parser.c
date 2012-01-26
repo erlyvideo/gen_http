@@ -117,6 +117,7 @@ static const char *method_strings[] =
   , "PLAY"
   , "PAUSE"
   , "SETUP"
+  , "RECORD"
   , "DESCRIBE"
   , "TEARDOWN"
   , "GET_PARAMETER"
@@ -679,6 +680,7 @@ size_t http_parser_execute (http_parser *parser,
         parser->method = (enum http_method) 0;
         index = 1;
         switch (ch) {
+          case 'A': parser->method = HTTP_ANNOUNCE; break;
           case 'C': parser->method = HTTP_CONNECT; /* or COPY, CHECKOUT */ break;
           case 'D': parser->method = HTTP_DELETE; break;
           case 'G': parser->method = HTTP_GET; break;
@@ -749,6 +751,8 @@ size_t http_parser_execute (http_parser *parser,
           }
         } else if (index == 2 && parser->method == HTTP_PATCH && ch == 'U') {
           parser->method = HTTP_PAUSE;
+        } else if (index == 2 && parser->method == HTTP_REPORT && ch == 'C') {
+          parser->method = HTTP_RECORD;
         } else if (index == 2 && parser->method == HTTP_SUBSCRIBE && ch == 'E') {
           parser->method = HTTP_SETUP;
         } else if (index == 4 && parser->method == HTTP_SETUP && ch == '_') {

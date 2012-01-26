@@ -116,8 +116,18 @@ enum http_method
   , HTTP_UNSUBSCRIBE
   /* RFC-5789 */
   , HTTP_PATCH
+  /* RTSP */
+  , HTTP_PLAY
+  , HTTP_PAUSE
+  , HTTP_SETUP
+  , HTTP_DESCRIBE
+  , HTTP_TEARDOWN
+  , HTTP_GET_PARAMETER
+  , HTTP_SET_PARAMETER
   };
 
+
+enum http_proto { PROTO_HTTP, PROTO_RTSP };
 
 enum http_parser_type { HTTP_REQUEST, HTTP_RESPONSE, HTTP_BOTH };
 
@@ -211,6 +221,7 @@ struct http_parser {
   int64_t content_length;
 
   /** READ-ONLY **/
+  unsigned char proto; // RTSP/HTTP
   unsigned short http_major;
   unsigned short http_minor;
   unsigned short status_code; /* responses only */

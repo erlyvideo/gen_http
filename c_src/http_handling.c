@@ -180,7 +180,7 @@ int on_headers_complete(http_parser *p) {
   // {http, Socket, Status, Keepalive, Version, Headers} for client side
   
   reply[i++] = ERL_DRV_ATOM;
-  reply[i++] = atom_http;
+  reply[i++] = p->proto == PROTO_HTTP ? atom_http : p->proto == PROTO_RTSP ? atom_rtsp : driver_mk_atom("error");
   reply[i++] = ERL_DRV_PORT;
   reply[i++] = driver_mk_port(d->port);
   

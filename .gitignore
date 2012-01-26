@@ -1,5 +1,4 @@
 ebin
-priv
 *.plt
 .eunit
 deps

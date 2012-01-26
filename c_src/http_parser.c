@@ -114,6 +114,13 @@ static const char *method_strings[] =
   , "SUBSCRIBE"
   , "UNSUBSCRIBE"
   , "PATCH"
+  , "PLAY"
+  , "PAUSE"
+  , "SETUP"
+  , "DESCRIBE"
+  , "TEARDOWN"
+  , "GET_PARAMETER"
+  , "SET_PARAMETER"
   };
 
 
@@ -244,6 +251,10 @@ enum state
   , s_req_http_HT
   , s_req_http_HTT
   , s_req_http_HTTP
+  , s_req_http_R
+  , s_req_http_RT
+  , s_req_http_RTS
+  , s_req_http_RTSP
   , s_req_first_http_major
   , s_req_http_major
   , s_req_first_http_minor
@@ -731,9 +742,23 @@ size_t http_parser_execute (http_parser *parser,
             parser->method = HTTP_PUT;
           } else if (ch == 'A') {
             parser->method = HTTP_PATCH;
+          } else if (ch == 'L') {
+            parser->method = HTTP_PLAY;
           } else {
             goto error;
           }
+        } else if (index == 2 && parser->method == HTTP_PATCH && ch == 'U') {
+          parser->method = HTTP_PAUSE;
+        } else if (index == 2 && parser->method == HTTP_SUBSCRIBE && ch == 'E') {
+          parser->method = HTTP_SETUP;
+        } else if (index == 4 && parser->method == HTTP_SETUP && ch == '_') {
+          parser->method = HTTP_SET_PARAMETER;
+        } else if (index == 4 && parser->method == HTTP_GET && ch == '_') {
+          parser->method = HTTP_GET_PARAMETER;
+        } else if (index == 1 && parser->method == HTTP_TRACE && ch == 'E') {
+          parser->method = HTTP_TEARDOWN;
+        } else if (index == 2 && parser->method == HTTP_DELETE && ch == 'S') {
+          parser->method = HTTP_DESCRIBE;
         } else if (index == 2 && parser->method == HTTP_UNLOCK && ch == 'S') {
           parser->method = HTTP_UNSUBSCRIBE;
         } else if (index == 4 && parser->method == HTTP_PROPFIND && ch == 'P') {
@@ -1022,6 +1047,8 @@ size_t http_parser_execute (http_parser *parser,
           case 'H':
             state = s_req_http_H;
             break;
+          case 'R':
+            state = s_req_http_R;
           case ' ':
             break;
           default:
@@ -1043,9 +1070,27 @@ size_t http_parser_execute (http_parser *parser,
       case s_req_http_HTT:
         STRICT_CHECK(ch != 'P');
         state = s_req_http_HTTP;
+        parser->proto = PROTO_HTTP;
+        break;
+
+      case s_req_http_R:
+        STRICT_CHECK(ch != 'T');
+        state = s_req_http_RT;
+        break;
+
+      case s_req_http_RT:
+        STRICT_CHECK(ch != 'S');
+        state = s_req_http_RTS;
+        break;
+
+      case s_req_http_RTS:
+        STRICT_CHECK(ch != 'P');
+        state = s_req_http_RTSP;
+        parser->proto = PROTO_RTSP;
         break;
 
       case s_req_http_HTTP:
+      case s_req_http_RTSP:
         STRICT_CHECK(ch != '/');
         state = s_req_first_http_major;
         break;

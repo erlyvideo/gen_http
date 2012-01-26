@@ -22,6 +22,7 @@
 
 
 extern ErlDrvTermData atom_http;
+extern ErlDrvTermData atom_rtsp;
 extern ErlDrvTermData atom_keepalive;
 extern ErlDrvTermData atom_close;
 extern ErlDrvTermData atom_eof;

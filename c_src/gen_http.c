@@ -1,6 +1,7 @@
 #include "gen_http.h"
 
 ErlDrvTermData atom_http;
+ErlDrvTermData atom_rtsp;
 ErlDrvTermData atom_keepalive;
 ErlDrvTermData atom_close;
 ErlDrvTermData atom_eof;
@@ -13,6 +14,7 @@ ErlDrvTermData method_atoms[HTTP_PATCH+1];
 
 static int gen_http_init(void) {
   atom_http = driver_mk_atom("http");
+  atom_rtsp = driver_mk_atom("rtsp");
   atom_keepalive = driver_mk_atom("keepalive");
   atom_close = driver_mk_atom("close");
   atom_eof = driver_mk_atom("eof");

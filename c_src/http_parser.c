@@ -118,6 +118,7 @@ static const char *method_strings[] =
   , "PAUSE"
   , "SETUP"
   , "RECORD"
+  , "ANNOUNCE"
   , "DESCRIBE"
   , "TEARDOWN"
   , "GET_PARAMETER"
@@ -753,11 +754,11 @@ size_t http_parser_execute (http_parser *parser,
           parser->method = HTTP_PAUSE;
         } else if (index == 2 && parser->method == HTTP_REPORT && ch == 'C') {
           parser->method = HTTP_RECORD;
-        } else if (index == 2 && parser->method == HTTP_SUBSCRIBE && ch == 'E') {
+        } else if (index == 1 && parser->method == HTTP_SUBSCRIBE && ch == 'E') {
           parser->method = HTTP_SETUP;
-        } else if (index == 4 && parser->method == HTTP_SETUP && ch == '_') {
+        } else if (index == 3 && parser->method == HTTP_SETUP && ch == '_') {
           parser->method = HTTP_SET_PARAMETER;
-        } else if (index == 4 && parser->method == HTTP_GET && ch == '_') {
+        } else if (index == 3 && parser->method == HTTP_GET && ch == '_') {
           parser->method = HTTP_GET_PARAMETER;
         } else if (index == 1 && parser->method == HTTP_TRACE && ch == 'E') {
           parser->method = HTTP_TEARDOWN;

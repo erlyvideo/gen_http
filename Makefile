@@ -14,11 +14,7 @@ clean:
 	./rebar clean
 	@rm -f priv/*.so c_src/*.o test/*.beam
 
-test:
-	erl -make
-	erl -pa ebin -noinput -s gen_http test -s init stop
-
-eunit:
+test: compile
 	@$(REBAR) eunit skip_deps=true
 
 ct:
@@ -33,3 +29,4 @@ dialyze:
 		-Werror_handling \
 		-Wrace_conditions -Wunmatched_returns -Wunderspecs #-Wbehaviours
 
+.PHONY: test

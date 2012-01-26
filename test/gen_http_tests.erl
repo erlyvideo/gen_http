@@ -148,3 +148,40 @@ raw_mode_test_() ->
     ok
   end}.
   
+
+catch_request(Port, Fun) ->
+  Self = self(),
+  Pid = spawn_link(fun() ->
+    {ok, L} = gen_http:listen(Port),
+    {ok, S} = gen_http:accept(L, 1000),
+    gen_http:active_once(S),
+    receive
+      Response -> Self ! {resp, self(), Response}
+    end
+  end),
+  _Pid2 = spawn_link(Fun),
+  receive
+    {resp, Pid, Response} -> Response
+  after
+    1000 -> erlang:exit(timeout)  
+  end.
+  
+test_request_helper(Request) ->
+  catch_request(?PORT, fun() ->
+    {ok, S} = gen_tcp:connect("localhost", ?PORT, [binary]),
+    gen_tcp:send(S, Request)
+  end).
+
+proto_parsing_test_() ->
+  {spawn, fun() ->
+    ?assertMatch({http, _, 'GET', <<"/">>, _, _, []}, test_request_helper("GET / HTTP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'PLAY', <<"/">>, _, _, []}, test_request_helper("PLAY / RTSP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'PAUSE', <<"/">>, _, _, []}, test_request_helper("PAUSE / RTSP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'SETUP', <<"/">>, _, _, []}, test_request_helper("SETUP / RTSP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'RECORD', <<"/">>, _, _, []}, test_request_helper("RECORD / RTSP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'ANNOUNCE', <<"/">>, _, _, []}, test_request_helper("ANNOUNCE / RTSP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'DESCRIBE', <<"/">>, _, _, []}, test_request_helper("DESCRIBE / RTSP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'TEARDOWN', <<"/">>, _, _, []}, test_request_helper("TEARDOWN / RTSP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'GET_PARAMETER', <<"/">>, _, _, []}, test_request_helper("GET_PARAMETER / RTSP/1.0\r\n\r\n"))
+    ,?assertMatch({rtsp, _, 'SET_PARAMETER', <<"/">>, _, _, []}, test_request_helper("SET_PARAMETER / RTSP/1.0\r\n\r\n"))
+  end}.

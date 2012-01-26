@@ -126,6 +126,7 @@ enum http_method
   , HTTP_TEARDOWN
   , HTTP_GET_PARAMETER
   , HTTP_SET_PARAMETER
+  , HTTP_MAX_METHOD
   };
 
 

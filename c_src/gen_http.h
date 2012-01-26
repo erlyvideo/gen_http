@@ -22,13 +22,14 @@
 
 
 extern ErlDrvTermData atom_http;
+extern ErlDrvTermData atom_http_error;
 extern ErlDrvTermData atom_rtsp;
 extern ErlDrvTermData atom_keepalive;
 extern ErlDrvTermData atom_close;
 extern ErlDrvTermData atom_eof;
 extern ErlDrvTermData atom_empty;
 extern ErlDrvTermData atom_connected;
-extern ErlDrvTermData method_atoms[HTTP_PATCH+1];
+extern ErlDrvTermData method_atoms[HTTP_MAX_METHOD];
 
 
 typedef enum {LISTENER_MODE, HANDLER_MODE, REQUEST_MODE} SocketMode;

@@ -1,19 +1,21 @@
 #include "gen_http.h"
 
 ErlDrvTermData atom_http;
+ErlDrvTermData atom_http_error;
 ErlDrvTermData atom_rtsp;
 ErlDrvTermData atom_keepalive;
 ErlDrvTermData atom_close;
 ErlDrvTermData atom_eof;
 ErlDrvTermData atom_empty;
 ErlDrvTermData atom_connected;
-ErlDrvTermData method_atoms[HTTP_PATCH+1];
+ErlDrvTermData method_atoms[HTTP_MAX_METHOD];
 
 
 
 
 static int gen_http_init(void) {
   atom_http = driver_mk_atom("http");
+  atom_http_error = driver_mk_atom("http_error");
   atom_rtsp = driver_mk_atom("rtsp");
   atom_keepalive = driver_mk_atom("keepalive");
   atom_close = driver_mk_atom("close");
@@ -21,7 +23,7 @@ static int gen_http_init(void) {
   atom_empty = driver_mk_atom("empty");
   atom_connected = driver_mk_atom("connected");
   int i;
-  for(i = 0; i <= HTTP_PATCH; i++) {
+  for(i = 0; i < HTTP_MAX_METHOD; i++) {
     method_atoms[i] = driver_mk_atom((char *)http_method_str(i));
   }
 
@@ -580,7 +582,7 @@ static void gen_http_inet_timeout(ErlDrvData handle)
 {
   HTTP* d = (HTTP *)handle;
   ErlDrvTermData reply[] = {
-    ERL_DRV_ATOM, driver_mk_atom("http_error"),
+    ERL_DRV_ATOM, atom_http_error,
     ERL_DRV_PORT, driver_mk_port(d->port),
     ERL_DRV_PORT, driver_mk_atom("timeout"),
     ERL_DRV_TUPLE, 3

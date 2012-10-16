@@ -86,7 +86,7 @@ void gh_cache_delete(HTTP *d, char *url) {
 }
 
 void gh_cache_list(HTTP *d) {
-  int count = 5 + kh_size(cache)*12;
+  int count = 9 + kh_size(cache)*12;
   int i = 0;
   int j = 0;
   ErlDrvTermData reply[count];
